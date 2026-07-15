@@ -1,0 +1,603 @@
+#!/usr/bin/env bash
+# Requires bash >= 4.3 (mapfile, local -n, ${var,,}/${var^^}).
+# macOS ships bash 3.2 by default: `brew install bash` and make sure it
+# comes before /bin/bash in PATH.
+
+set -euo pipefail
+DEBUG=false
+
+CONFIG_FILE=""
+
+LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
+# .docker/ddep.json (deep-merged over the script's built-in defaults; any key,
+# including nested application settings, fully replaces its default when set
+# locally rather than appending to it):
+# {
+#   "app": "symfony",                       # required, must match a key under "settings" below
+#
+#   "hosts": {                              # required, at least one entry
+#     "dev": "user@dev-host",
+#     "test": "user@test-host",
+#     "live": "user@live-host"
+#   },
+#
+#   "environments_path": "/opt/docker/compose",  # optional, overrides the built-in default
+#   "mariadb_version": "lts",                    # optional, overrides the built-in default
+#
+#   "settings": {                            # optional, overrides built-in per-application settings
+#     "symfony": {
+#       "db": {
+#         "exclude_tables": [               # replaces the application's built-in exclude list
+#           "^sessions$",
+#           "^v_media_references_info$"
+#         ]
+#       }
+#     }
+#   }
+# }
+
+# Requirements (local machine):
+#   jq, docker, ssh, rsync, gzip
+#   Must be run from inside the project's git working copy (the project name and
+#   remote docker-compose directories are derived from `git remote get-url origin`).
+#   Passwordless SSH access to the target host is required, since every command
+#   makes at least one SSH/Docker-over-SSH round trip.
+#
+# Usage:
+#   ddep.sh [options] <command>
+#
+#   Options may appear before or after the command, in any order.
+#
+# Commands:
+#   media:push              Push local media files to the remote application container
+#   media:pull              Pull media files from the remote application container
+#   db:push                 Import a database dump (read from stdin) into the remote
+#                           database, then run the application's DB migration
+#   db:pull                 Export the remote database to stdout
+#   ssh [command]           Open a shell or execute a command inside the remote container
+#
+# Options:
+#   --debug                 Enable bash execution tracing
+#   --host <host>           Target host from .docker/ddep.json
+#                           Default: dev
+#
+#   --env <environment>     Target remote environment slug. This is the part of the
+#                           remote docker-compose project directory name after
+#                           "<project>_", e.g. "feature_xyz" for a directory named
+#                           "myproject_feature_xyz".
+#                           Default: interactively pick from the environments
+#                           currently deployed on --host
+#
+# Configuration:
+#   Default configuration (environments_path, mariadb_version, and the per-application
+#   db/rsync settings) is built into the script. Project-specific configuration is
+#   loaded from .docker/ddep.json and deep-merged on top — see the schema above.
+#
+# Examples:
+#
+#   # Pull media from the test environment
+#   ddep.sh --host test media:pull --env development
+#
+#   # Push local media to the dev environment
+#   ddep.sh --host dev media:push --env feature_xyz
+#
+#   # Open an interactive shell in the dev application container
+#   ddep.sh --host dev ssh
+#
+#   # Execute a command inside the dev application container
+#   ddep.sh --host dev ssh "vendor/bin/typo3 list"
+#
+#   # Import a database dump into the dev environment
+#   ddep.sh --host dev db:push --env feature_xyz < dump.sql
+#
+#   # Export the dev database to a dump file
+#   ddep.sh --host dev db:pull --env feature_xyz > dump.sql
+#
+#   # Pipe an existing dump directly into the remote database
+#   cat dump.sql | ddep.sh --host dev db:push --env feature_xyz
+#
+#   # Export a remote TYPO3 database and import it locally
+#   ssh dev@vm "cd /var/www/html/typo3/current && vendor/bin/typo3 database:export" \
+#       | ddep.sh --host dev --env branch-69 db:push
+
+# Functions
+load_default_config() {
+    cat <<'JSON'
+{
+  "environments_path": "/opt/docker/compose",
+  "mariadb_version": "lts",
+  "settings": {
+    "typo3": {
+      "db": {
+        "migration": "/usr/bin/php vendor/bin/typo3 database:updateschema --no-interaction --quiet",
+        "env": {
+          "host": "TYPO3_CONF_VARS__DB__Connections__Default__host",
+          "dbname": "TYPO3_CONF_VARS__DB__Connections__Default__dbname",
+          "user": "TYPO3_CONF_VARS__DB__Connections__Default__user",
+          "password": "TYPO3_CONF_VARS__DB__Connections__Default__password",
+          "port": "TYPO3_CONF_VARS__DB__Connections__Default__port"
+        },
+        "exclude_tables": [
+          "^cf_.*",
+          "^cache_.*",
+          "^be_sessions$",
+          "^fe_sessions$",
+          "^fe_session_data$",
+          "^sys_file_processedfile$",
+          "^sys_http_report$",
+          "^sys_refindex$",
+          "^tx_devlog$",
+          "^tx_extensionmanager_domain_model_extension$",
+          "^tx_solr_.*",
+          "^tx_crawler_queue$",
+          "^tx_crawler_process$"
+        ]
+      },
+      "rsync": {
+        "max_size_mb": 5,
+        "directories": [
+          "fileadmin",
+          "uploads"
+        ],
+        "exclude_paths": [
+          "_processed_",
+          "_temp_"
+        ],
+        "exclude_extensions": [
+          "mp4",
+          "zip",
+          "pdf",
+          "exe",
+          "doc",
+          "docx",
+          "pptx",
+          "ppt",
+          "xls",
+          "xlsx",
+          "xlsm",
+          "tiff",
+          "tif",
+          "potx",
+          "mpg",
+          "mp3",
+          "avi",
+          "wmv",
+          "flv",
+          "eps",
+          "ai",
+          "mov"
+        ]
+      }
+    },
+
+    "symfony": {
+      "db": {
+        "migration": "/usr/bin/php bin/console doctrine:migrations:migrate --no-interaction --quiet",
+        "env": {
+          "host": "SYMFONY_DATABASE_HOST",
+          "dbname": "SYMFONY_DATABASE_DBNAME",
+          "user": "SYMFONY_DATABASE_USER",
+          "password": "SYMFONY_DATABASE_PASSWORD",
+          "port": "SYMFONY_DATABASE_PORT"
+        },
+        "exclude_tables": [
+          "^sessions$"
+        ]
+      },
+      "rsync": {
+        "max_size_mb": 5,
+        "directories": [
+          "upload"
+        ],
+        "exclude_paths": [
+          "thumb",
+          "thumb_*"
+        ],
+        "exclude_extensions": [
+          "mp4",
+          "zip",
+          "pdf",
+          "exe",
+          "doc",
+          "docx",
+          "pptx",
+          "ppt",
+          "xls",
+          "xlsx",
+          "xlsm",
+          "tiff",
+          "tif",
+          "potx",
+          "mpg",
+          "mp3",
+          "avi",
+          "wmv",
+          "flv",
+          "eps",
+          "ai",
+          "mov"
+        ]
+      }
+    }
+  }
+}
+JSON
+}
+
+load_config() {
+    local local_config="${LOCAL_CONFIG_FILE}"
+
+    CONFIG_FILE=$(mktemp)
+
+    if [[ ! -f "${local_config}" ]]; then
+        echo "Error: ${local_config} missing" >&2
+        exit 1
+    fi
+
+    jq -n \
+        --slurpfile default <(load_default_config) \
+        --slurpfile local "${local_config}" \
+        '
+        def deepmerge(a;b):
+            reduce (b | keys[]) as $key (
+                a;
+                if (.[$key] | type) == "object"
+                   and (b[$key] | type) == "object"
+                then
+                    .[$key] = deepmerge(.[$key]; b[$key])
+                else
+                    .[$key] = b[$key]
+                end
+            );
+
+        deepmerge($default[0]; $local[0])
+        ' > "${CONFIG_FILE}"
+}
+
+validate_config() {
+    local missing=()
+
+    if [[ "$(jq -r '.app // empty' "${CONFIG_FILE}")" == "" ]]; then
+        missing+=("app")
+    fi
+
+    if [[ "$(jq -r '.hosts // empty' "${CONFIG_FILE}")" == "" ]]; then
+        missing+=("hosts")
+    fi
+
+    if [[ "${#missing[@]}" -gt 0 ]]; then
+        echo "Error: missing required configuration: ${missing[*]}" >&2
+        exit 1
+    fi
+}
+
+parse_config_json() {
+    # validate_config already guarantees .app is present and non-empty
+    APP_NAME=$(jq -r '.app' "${CONFIG_FILE}")
+
+    APP_CONFIG=".settings[\"${APP_NAME}\"]"
+    if [[ "$(jq -r "${APP_CONFIG} // empty" "${CONFIG_FILE}")" == "" ]]; then
+        echo "Error: app '${APP_NAME}' is not defined in default configuration" >&2
+        exit 1
+    fi
+
+    ENVIRONMENTS_PATH=$(jq -r '.environments_path' "${CONFIG_FILE}")
+    ENVIRONMENTS_PATH="${ENVIRONMENTS_PATH%/}"
+
+    if [[ -z "${ENVIRONMENTS_PATH}" || "${ENVIRONMENTS_PATH}" == "null" ]]; then
+        echo "Error: environments_path is missing" >&2
+        exit 1
+    fi
+
+    MARIADB_VERSION=$(jq -r '.mariadb_version // "lts"' "${CONFIG_FILE}")
+
+    REMOTE_DOCKER_HOST=$(jq -r ".hosts.${host} // empty" "${CONFIG_FILE}")
+
+    if [[ -z "${REMOTE_DOCKER_HOST}" ]]; then
+        echo "Error: host '${host}' is not configured" >&2
+        exit 1
+    fi
+
+    # Database configuration
+    DB_MIGRATION=$(jq -r "${APP_CONFIG}.db.migration" "${CONFIG_FILE}")
+
+    DB_ENV_HOST=$(jq -r "${APP_CONFIG}.db.env.host" "${CONFIG_FILE}")
+    DB_ENV_DBNAME=$(jq -r "${APP_CONFIG}.db.env.dbname" "${CONFIG_FILE}")
+    DB_ENV_USER=$(jq -r "${APP_CONFIG}.db.env.user" "${CONFIG_FILE}")
+    DB_ENV_PASSWORD=$(jq -r "${APP_CONFIG}.db.env.password" "${CONFIG_FILE}")
+    DB_ENV_PORT=$(jq -r "${APP_CONFIG}.db.env.port" "${CONFIG_FILE}")
+
+
+    # Rsync configuration
+    RSYNC_MAX_SIZE_MB=$(jq -r "${APP_CONFIG}.rsync.max_size_mb" "${CONFIG_FILE}")
+
+    mapfile -t RSYNC_DIRECTORIES < <(
+        jq -r "${APP_CONFIG}.rsync.directories[]" "${CONFIG_FILE}"
+    )
+
+    mapfile -t RSYNC_EXCLUDE_PATHS < <(
+        jq -r "${APP_CONFIG}.rsync.exclude_paths[]" "${CONFIG_FILE}"
+    )
+
+    mapfile -t RSYNC_EXCLUDE_EXTENSIONS < <(
+        jq -r "${APP_CONFIG}.rsync.exclude_extensions[]" "${CONFIG_FILE}"
+    )
+
+
+    # Database table exclusions
+    mapfile -t DB_EXCLUDE_TABLES < <(
+        jq -r "(${APP_CONFIG}.db.exclude_tables // []) | .[]" "${CONFIG_FILE}"
+    )
+}
+
+get_env_value() {
+    awk -F= -v key="$1" '$1 == key {print $2}'
+}
+
+
+get_mariadb_credentials() {
+    local -n _mariadb_host=$1
+    local -n _mariadb_name=$2
+    local -n _mariadb_user=$3
+    local -n _mariadb_password=$4
+    local -n _mariadb_port=$5
+
+    local environment_file_path="${ENVIRONMENTS_PATH}/${git_project_name}_${target_env}/.app.env.provision"
+
+    if ! ssh "${REMOTE_DOCKER_HOST}" "test -f '${environment_file_path}'"; then
+        echo "Error: ${environment_file_path} missing" >&2
+        exit 1
+    fi
+
+    env_content=$(ssh "${REMOTE_DOCKER_HOST}" "cat '${environment_file_path}'")
+
+    _mariadb_host=$(get_env_value "${DB_ENV_HOST}" <<< "${env_content}")
+    _mariadb_name=$(get_env_value "${DB_ENV_DBNAME}" <<< "${env_content}")
+    _mariadb_user=$(get_env_value "${DB_ENV_USER}" <<< "${env_content}")
+    _mariadb_password=$(get_env_value "${DB_ENV_PASSWORD}" <<< "${env_content}")
+    _mariadb_port=$(get_env_value "${DB_ENV_PORT}" <<< "${env_content}")
+
+    _mariadb_port=${_mariadb_port:-3306}
+}
+
+ensure_mariadb_image() {
+    docker pull "mariadb:${MARIADB_VERSION}" >/dev/null 2>&1
+}
+
+rsync_exclude_params() {
+    rsync_exclude_params=()
+
+    for _exclude_path in "${RSYNC_EXCLUDE_PATHS[@]}"; do
+        rsync_exclude_params+=("--exclude=**/${_exclude_path}")
+    done
+
+    for _exclude_extension in "${RSYNC_EXCLUDE_EXTENSIONS[@]}"; do
+        rsync_exclude_params+=("--exclude=*.${_exclude_extension,,}")
+        rsync_exclude_params+=("--exclude=*.${_exclude_extension^^}")
+    done
+}
+
+get_container_id() {
+    local -n _container_id=$1
+    local environment_path="${ENVIRONMENTS_PATH}/${git_project_name}_${target_env}"
+    _container_id=$(docker ps -q --filter "label=com.docker.compose.project.working_dir=${environment_path}" --filter "label=com.docker.compose.service=${APP_NAME}")
+    if [ -z "$_container_id" ]
+    then
+        return 1
+    elif [ "$(echo "$_container_id" | wc -l)" -gt 1 ]
+    then
+        return 1
+    fi
+    return 0
+}
+
+get_available_remote_envs() {
+    docker ps -a \
+        --filter "label=com.docker.compose.service=${APP_NAME}" \
+        --format '{{.Label "com.docker.compose.project.working_dir"}}' \
+    | grep "/${git_project_name}_" \
+    | sed "s|.*/${git_project_name}_||" \
+    | sort -u
+}
+
+select_env() {
+    local envs=()
+
+    mapfile -t envs < <(get_available_remote_envs)
+
+    if [[ "${#envs[@]}" -eq 0 ]]; then
+        echo "Error: no remote environments found on host ${host}" >&2
+        exit 1
+    fi
+
+    echo "Select environment on ${host}:" >&2
+
+    PS3="Environment: "
+    select env in "${envs[@]}"; do
+        if [[ -n "${env}" ]]; then
+            printf '%s\n' "${env}"
+            return
+        fi
+
+        echo "Invalid selection" >&2
+    done
+}
+
+# Main script execution
+command=""
+host=""
+tmpfile=""
+ssh_args=()
+
+cleanup() {
+    [[ -n "${CONFIG_FILE:-}" ]] && rm -f "${CONFIG_FILE}"
+    [[ -n "${tmpfile:-}" ]] && rm -f "${tmpfile}"
+}
+trap cleanup EXIT
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --debug)
+            DEBUG=true
+            shift
+            ;;
+        --host)
+            host="$2"
+            shift 2
+            ;;
+        --env)
+            target_env="$2"
+            shift 2
+            ;;
+        media:push|media:pull|db:push|db:pull)
+            command="$1"
+            shift
+            ;;
+        ssh)
+            command="$1"
+            shift
+            # Store all remaining arguments as ssh command, preserving quoted strings
+            if [[ $# -gt 0 ]]; then
+            ssh_args+=("$@")
+            shift $#
+            fi
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+if [ -z "${command}" ]; then
+    echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull" >&2
+    exit 1
+fi
+
+if [[ "${DEBUG}" == "true" ]]; then
+    set -x
+fi
+
+# Set defaults if not provided
+if [ -z "${host}" ]; then
+    host="dev"
+fi
+
+# Needed before Docker environment lookup
+git_project_name="$(basename "$(git remote get-url origin)")"
+git_project_name="${git_project_name%.git}"
+
+load_config
+validate_config
+parse_config_json
+
+export DOCKER_HOST="ssh://${REMOTE_DOCKER_HOST}"
+
+if [[ -z "${target_env:-}" ]]; then
+    target_env="$(select_env)"
+fi
+
+# Run commands
+if [ "${command}" = "media:push" ]; then
+    rsync_exclude_params
+    if ! get_container_id container_id; then
+        echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
+        exit 1
+    fi
+
+    for dir in "${RSYNC_DIRECTORIES[@]}"; do
+        if [[ ! -d "$(pwd)/public/${dir}" ]]; then
+            echo "Directory public/${dir} does not exist, skipping..."
+            continue
+        fi
+        rsync -e 'docker exec -i' -avz "--max-size=${RSYNC_MAX_SIZE_MB}m" "${rsync_exclude_params[@]}" "$(pwd)/public/${dir}" "${container_id}":/var/www/html/app/public/
+    done
+
+elif [ "${command}" = "media:pull" ]; then
+    rsync_exclude_params
+    if ! get_container_id container_id; then
+        echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
+        exit 1
+    fi
+
+    for dir in "${RSYNC_DIRECTORIES[@]}"; do
+        if ! docker exec "${container_id}" [ -d "/var/www/html/app/public/${dir}" ]; then
+            echo "Directory /var/www/html/app/public/${dir} does not exist in container, skipping..."
+            continue
+        fi
+        # ensure local target directory exists
+        mkdir -p "$(pwd)/public/${dir}"
+        rsync -e 'docker exec -i' -avz "--max-size=${RSYNC_MAX_SIZE_MB}m" "${rsync_exclude_params[@]}" "${container_id}":/var/www/html/app/public/"${dir}" "$(pwd)/public/"
+    done
+
+elif [ "${command}" = "ssh" ]; then
+    if ! get_container_id container_id; then
+        echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
+        exit 1
+    fi
+    if [ "${#ssh_args[@]}" -gt 0 ]; then
+        docker exec -it "${container_id}" /bin/bash -c "${ssh_args[*]}"
+    else
+        docker exec -it "${container_id}" /bin/bash
+    fi
+
+elif [ "${command}" = "db:push" ]; then
+    # Create temporary file for compressed mysqldump from stdin; cleanup runs via the global EXIT trap
+    tmpfile=$(mktemp)
+    gzip -c > "$tmpfile"
+
+    get_mariadb_credentials db_host db_name db_user db_password db_port
+    ensure_mariadb_image
+
+    # Import database dump from stdin and gunzip on the fly to database with remote container
+    # MYSQL_PWD is forwarded via -e (not -p) so the password never appears in argv/process listings
+    gunzip -c "${tmpfile}" | MYSQL_PWD="${db_password}" docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+        mariadb --host="${db_host}" --port="${db_port}" --user="${db_user}" \
+        "${db_name}"
+
+    if get_container_id container_id; then
+        echo "Running database migration for ${APP_NAME}..."
+
+        docker exec "${container_id}" \
+            bash -lc "${DB_MIGRATION}"
+    else
+        echo "Warning: container ${APP_NAME} not found, skipping migration" >&2
+    fi
+
+elif [ "${command}" = "db:pull" ]; then
+    get_mariadb_credentials db_host db_name db_user db_password db_port
+    ensure_mariadb_image
+
+    ignore_args=()
+
+    if [ "${#DB_EXCLUDE_TABLES[@]}" -gt 0 ]; then
+        # Convert JSON regex array into MariaDB REGEXP expression
+        regex=$(IFS="|"; echo "${DB_EXCLUDE_TABLES[*]}")
+
+        # MYSQL_PWD is forwarded via -e (not -p) so the password never appears in argv/process listings
+        tables=$(MYSQL_PWD="${db_password}" docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+            sh -c "mariadb \
+                --host '${db_host}' \
+                --port '${db_port}' \
+                --user '${db_user}' \
+                -N -e \"
+                SELECT TABLE_NAME
+                FROM information_schema.tables
+                WHERE table_schema='${db_name}'
+                AND TABLE_NAME REGEXP '${regex}';
+                \"")
+
+        for table in ${tables}; do
+            ignore_args+=( "--ignore-table=${db_name}.${table}" )
+        done
+    fi
+
+    MYSQL_PWD="${db_password}" docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+        mariadb-dump \
+        --host "${db_host}" \
+        --port "${db_port}" \
+        --user "${db_user}" \
+        --single-transaction \
+        --skip-lock-tables \
+        "${ignore_args[@]}" \
+        "${db_name}"
+fi
