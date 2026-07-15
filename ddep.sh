@@ -55,6 +55,7 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #                           database, then run the application's DB migration
 #   db:pull                 Export the remote database to stdout
 #   ssh [command]           Open a shell or execute a command inside the remote container
+#   logs                    Follow the remote application container's log output
 #
 # Options:
 #   --debug                 Enable bash execution tracing
@@ -86,6 +87,9 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #
 #   # Execute a command inside the dev application container
 #   ddep.sh --host dev ssh "vendor/bin/typo3 list"
+#
+#   # Follow the dev application container's log output
+#   ddep.sh --host dev logs
 #
 #   # Import a database dump into the dev environment
 #   ddep.sh --host dev db:push --env feature_xyz < dump.sql
@@ -449,7 +453,7 @@ while [[ $# -gt 0 ]]; do
             target_env="$2"
             shift 2
             ;;
-        media:push|media:pull|db:push|db:pull)
+        media:push|media:pull|db:push|db:pull|logs)
             command="$1"
             shift
             ;;
@@ -469,7 +473,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 if [ -z "${command}" ]; then
-    echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull" >&2
+    echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull, logs" >&2
     exit 1
 fi
 
@@ -539,6 +543,13 @@ elif [ "${command}" = "ssh" ]; then
     else
         docker exec -it "${container_id}" /bin/bash
     fi
+
+elif [ "${command}" = "logs" ]; then
+    if ! get_container_id container_id; then
+        echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
+        exit 1
+    fi
+    docker logs -f "${container_id}"
 
 elif [ "${command}" = "db:push" ]; then
     # Create temporary file for compressed mysqldump from stdin; cleanup runs via the global EXIT trap

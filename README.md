@@ -95,6 +95,7 @@ table you still want excluded, not just the ones you're adding.
 | `db:push` | Import a database dump (read from stdin) into the remote database, then run the application's DB migration |
 | `db:pull` | Export the remote database to stdout |
 | `ssh [command]` | Open a shell, or execute a command, inside the remote container |
+| `logs` | Follow the remote application container's log output |
 
 ## Options
 
@@ -120,6 +121,9 @@ ddep.sh --host dev ssh
 
 # Execute a command inside the dev application container
 ddep.sh --host dev ssh "vendor/bin/typo3 list"
+
+# Follow the dev application container's log output
+ddep.sh --host dev logs
 
 # Import a database dump into the dev environment
 ddep.sh --host dev db:push --env feature_xyz < dump.sql
