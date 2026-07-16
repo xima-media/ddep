@@ -485,10 +485,18 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --host)
+            if [[ $# -lt 2 || "$2" == -* ]]; then
+                echo "Error: --host requires a value" >&2
+                exit 1
+            fi
             host="$2"
             shift 2
             ;;
         --env)
+            if [[ $# -lt 2 || "$2" == -* ]]; then
+                echo "Error: --env requires a value" >&2
+                exit 1
+            fi
             target_env="$2"
             shift 2
             ;;
