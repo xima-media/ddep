@@ -1,0 +1,8 @@
+# Remote paths are intentionally expanded client-side before being sent over ssh
+# (they are constructed locally and wrapped in single quotes for the remote shell).
+disable=SC2029
+
+# MYSQL_PWD is deliberately exported inside subshells so the password stays out
+# of the traced (set -x) and long-lived environment; the "change is local to the
+# subshell" is the intent, not a bug.
+disable=SC2030,SC2031

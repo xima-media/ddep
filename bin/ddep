@@ -540,6 +540,14 @@ tmpfile=""
 ssh_args=()
 FORCE=false
 
+# Populated via namerefs by get_container_id and get_mariadb_credentials.
+container_id=""
+db_host=""
+db_name=""
+db_user=""
+db_password=""
+db_port=""
+
 cleanup() {
     # Preserve the triggering exit status: under set -e, a failing last command
     # in an EXIT trap would otherwise become the script's exit code.
