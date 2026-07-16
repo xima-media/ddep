@@ -160,6 +160,8 @@ Options may appear before or after the command, in any order.
 | `--force` | Skip the confirmation prompt for destructive operations (`db:push`, `media:push`). Required for non-interactive/CI use |
 | `--host <host>` | Target host from `.docker/ddep.json`. Default: `dev` |
 | `--env <environment>` | Remote environment slug — the part of the remote docker-compose project directory name after `<project>_`. Default: interactively pick from the environments currently deployed on `--host` |
+| `-h`, `--help` | Show usage and exit |
+| `-V`, `--version` | Show version and exit |
 
 ## Examples
 

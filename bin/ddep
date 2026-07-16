@@ -5,6 +5,8 @@
 
 set -euo pipefail
 DEBUG=false
+# Bumped on release; keep in sync with the git tag used for composer.
+DDEP_VERSION="1.0.0"
 
 CONFIG_FILE=""
 
@@ -58,6 +60,8 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   logs                    Follow the remote application container's log output
 #
 # Options:
+#   -h, --help              Show usage and exit
+#   -V, --version           Show version and exit
 #   --debug                 Enable bash execution tracing
 #   --force                 Skip the confirmation prompt for destructive
 #                           operations (db:push, media:push). Required for
@@ -108,6 +112,28 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #       | ddep --host dev --env branch-69 db:push
 
 # Functions
+usage() {
+    cat <<'EOF'
+Usage: ddep [options] <command>
+
+Commands:
+  media:push   Push local media files to the remote application container
+  media:pull   Pull media files from the remote application container
+  db:push      Import a database dump (stdin) into the remote DB, then migrate
+  db:pull      Export the remote database to stdout
+  ssh [cmd]    Open a shell, or run a command, in the remote container
+  logs         Follow the remote application container's log output
+
+Options:
+  --host <host>   Target host from .docker/ddep.json (default: dev)
+  --env <env>     Target environment slug (default: interactive pick)
+  --force         Skip confirmation for destructive ops (db:push, media:push)
+  --debug         Enable bash execution tracing
+  -h, --help      Show this help and exit
+  -V, --version   Show version and exit
+EOF
+}
+
 check_requirements() {
     local missing=()
     local cmd
@@ -526,6 +552,14 @@ trap cleanup EXIT
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -V|--version)
+            echo "ddep ${DDEP_VERSION}"
+            exit 0
+            ;;
         --debug)
             DEBUG=true
             shift
