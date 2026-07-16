@@ -1,8 +1,8 @@
 {
-  "app": "typo3",
-  "hosts": {
-    "dev": "user@dev-host",
-    "test": "user@test-host",
-    "live": "user@live-host"
-  }
+	"app": "typo3",
+	"hosts": {
+		"dev": "user@dev-host",
+		"test": "user@test-host",
+		"live": "user@live-host"
+	}
 }

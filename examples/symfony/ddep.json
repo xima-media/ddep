@@ -1,18 +1,18 @@
 {
-  "app": "symfony",
-  "hosts": {
-    "dev": "user@dev-host",
-    "test": "user@test-host",
-    "live": "user@live-host"
-  },
-  "settings": {
-    "symfony": {
-      "db": {
-        "exclude_tables": [
-          "^sessions$",
-          "^v_media_references_info$"
-        ]
-      }
-    }
-  }
+	"app": "symfony",
+	"hosts": {
+		"dev": "user@dev-host",
+		"test": "user@test-host",
+		"live": "user@live-host"
+	},
+	"settings": {
+		"symfony": {
+			"db": {
+				"exclude_tables": [
+					"^sessions$",
+					"^v_media_references_info$"
+				]
+			}
+		}
+	}
 }
