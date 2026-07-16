@@ -642,10 +642,24 @@ elif [ "${command}" = "logs" ]; then
     docker logs -f "${container_id}"
 
 elif [ "${command}" = "db:push" ]; then
-    confirm_destructive "overwrite the remote database and run migrations"
+    if [ -t 0 ]; then
+        echo "Error: db:push reads the SQL dump from stdin; pipe one in, e.g.:" >&2
+        echo "       ddep --host dev db:push < dump.sql" >&2
+        exit 1
+    fi
+
     # Create temporary file for compressed mysqldump from stdin; cleanup runs via the global EXIT trap
     tmpfile=$(mktemp)
     gzip -c > "$tmpfile"
+
+    # gzip always writes a header, so empty stdin yields a valid-but-empty archive;
+    # verify the decompressed stream actually contains data before proceeding.
+    if [ -z "$(gunzip -c "${tmpfile}" | head -c1)" ]; then
+        echo "Error: no data received on stdin; aborting db:push." >&2
+        exit 1
+    fi
+
+    confirm_destructive "overwrite the remote database and run migrations"
 
     get_mariadb_credentials db_host db_name db_user db_password db_port
     ensure_mariadb_image
