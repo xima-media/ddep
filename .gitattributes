@@ -1,0 +1,12 @@
+# Keep the executable LF-only regardless of platform autocrlf settings.
+bin/ddep text eol=lf
+
+# Exclude development-only files from the composer/dist archive.
+/.github export-ignore
+/tests export-ignore
+/examples export-ignore
+/.editorconfig export-ignore
+/.editorconfig-checker.json export-ignore
+/.shellcheckrc export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
