@@ -44,7 +44,7 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   makes at least one SSH/Docker-over-SSH round trip.
 #
 # Usage:
-#   ddep.sh [options] <command>
+#   ddep [options] <command>
 #
 #   Options may appear before or after the command, in any order.
 #
@@ -77,32 +77,32 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 # Examples:
 #
 #   # Pull media from the test environment
-#   ddep.sh --host test media:pull --env development
+#   ddep --host test media:pull --env development
 #
 #   # Push local media to the dev environment
-#   ddep.sh --host dev media:push --env feature_xyz
+#   ddep --host dev media:push --env feature_xyz
 #
 #   # Open an interactive shell in the dev application container
-#   ddep.sh --host dev ssh
+#   ddep --host dev ssh
 #
 #   # Execute a command inside the dev application container
-#   ddep.sh --host dev ssh "vendor/bin/typo3 list"
+#   ddep --host dev ssh "vendor/bin/typo3 list"
 #
 #   # Follow the dev application container's log output
-#   ddep.sh --host dev logs
+#   ddep --host dev logs
 #
 #   # Import a database dump into the dev environment
-#   ddep.sh --host dev db:push --env feature_xyz < dump.sql
+#   ddep --host dev db:push --env feature_xyz < dump.sql
 #
 #   # Export the dev database to a dump file
-#   ddep.sh --host dev db:pull --env feature_xyz > dump.sql
+#   ddep --host dev db:pull --env feature_xyz > dump.sql
 #
 #   # Pipe an existing dump directly into the remote database
-#   cat dump.sql | ddep.sh --host dev db:push --env feature_xyz
+#   cat dump.sql | ddep --host dev db:push --env feature_xyz
 #
 #   # Export a remote TYPO3 database and import it locally
 #   ssh dev@vm "cd /var/www/html/typo3/current && vendor/bin/typo3 database:export" \
-#       | ddep.sh --host dev --env branch-69 db:push
+#       | ddep --host dev --env branch-69 db:push
 
 # Functions
 load_default_config() {

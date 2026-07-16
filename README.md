@@ -2,24 +2,67 @@
 
 Developer tooling for access to containerised environments.
 
-`ddep.sh` pushes/pulls media and database dumps between your local machine and
+`ddep` pushes/pulls media and database dumps between your local machine and
 a remote Docker Compose environment over SSH, and lets you open a shell in the
 remote application container.
 
 ## Requirements
 
-**Local machine:** `jq`, `docker`, `ssh`, `rsync`, `gzip`.
+**Local machine:** `bash` >= 4.3, `jq`, `docker`, `ssh`, `rsync`, `gzip`.
 
+- macOS ships bash 3.2 by default. Install a modern bash (`brew install bash`)
+  and make sure it precedes `/bin/bash` on your `PATH`, or the script fails with
+  cryptic errors (it uses `mapfile`, namerefs, and `${var,,}`).
 - Must be run from inside the project's git working copy — the project name
   and remote docker-compose directory are derived from `git remote get-url origin`.
 - Passwordless SSH access to the target host is required, since every command
   makes at least one SSH/Docker-over-SSH round trip.
 
+## Installation
+
+### As a composer package (recommended)
+
+ddep is distributed as a composer package and pinned per project, so every
+developer and every CI job runs the exact version the project was tested with.
+
+It is **not** published on Packagist — add the repository explicitly, then
+require it as a dev dependency:
+
+```json
+{
+  "repositories": [
+    { "type": "vcs", "url": "git@github.com:xima-media/ddep.git" }
+  ]
+}
+```
+
+```sh
+composer require --dev xima-media/ddep:^1.0
+```
+
+This exposes the binary as `vendor/bin/ddep`. Releases are cut as git tags, so
+`composer.lock` binds the tool version to the project.
+
+For local ergonomics with ddev, add a host-scoped custom command that forwards
+to the pinned binary (runs on the host, where docker/ssh/agent already live):
+
+```sh
+# .ddev/commands/host/ddep
+#!/usr/bin/env bash
+## Description: Run ddep against a remote environment
+## Usage: ddep [options] <command>
+exec "${DDEV_APPROOT}/vendor/bin/ddep" "$@"
+```
+
+### Standalone
+
+Clone the repo (or copy `bin/ddep`) somewhere on your `PATH` and call it
+directly — the script is self-contained and location-independent.
+
 ## Setup
 
-1. Copy `ddep.sh` somewhere on your `PATH` (or call it via a relative/absolute path).
-2. In the root of your project, create `.docker/ddep.json` with at least an
-   `app` and `hosts`:
+In the root of your project, create `.docker/ddep.json` with at least an
+`app` and `hosts`:
 
    ```json
    {
@@ -62,7 +105,7 @@ are replaced outright, never appended to or merged element-by-element.
 The built-in defaults for each application (`db.migration`, `db.env.*`,
 `db.exclude_tables`, `rsync.max_size_mb`, `rsync.directories`,
 `rsync.exclude_paths`, `rsync.exclude_extensions`) live in `load_default_config()`
-inside `ddep.sh` — copy the path you want to change from there.
+inside `bin/ddep` — copy the path you want to change from there.
 
 For example, to replace the built-in `db:pull` table-exclude list for `symfony`:
 
@@ -111,26 +154,26 @@ Options may appear before or after the command, in any order.
 
 ```sh
 # Pull media from the test environment
-ddep.sh --host test media:pull --env development
+ddep --host test media:pull --env development
 
 # Push local media to the dev environment
-ddep.sh --host dev media:push --env feature_xyz
+ddep --host dev media:push --env feature_xyz
 
 # Open an interactive shell in the dev application container
-ddep.sh --host dev ssh
+ddep --host dev ssh
 
 # Execute a command inside the dev application container
-ddep.sh --host dev ssh "vendor/bin/typo3 list"
+ddep --host dev ssh "vendor/bin/typo3 list"
 
 # Follow the dev application container's log output
-ddep.sh --host dev logs
+ddep --host dev logs
 
 # Import a database dump into the dev environment
-ddep.sh --host dev db:push --env feature_xyz < dump.sql
+ddep --host dev db:push --env feature_xyz < dump.sql
 
 # Export the dev database to a dump file
-ddep.sh --host dev db:pull --env feature_xyz > dump.sql
+ddep --host dev db:pull --env feature_xyz > dump.sql
 
 # Pipe an existing dump directly into the remote database
-cat dump.sql | ddep.sh --host dev db:push --env feature_xyz
+cat dump.sql | ddep --host dev db:push --env feature_xyz
 ```

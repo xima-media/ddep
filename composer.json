@@ -1,0 +1,36 @@
+{
+    "name": "xima-media/ddep",
+    "description": "Developer tooling for containerised remote environments: pull/push media and database dumps over SSH, open a shell, and follow logs of a remote Docker Compose application container.",
+    "type": "library",
+    "license": "proprietary",
+    "keywords": [
+        "docker",
+        "ddev",
+        "typo3",
+        "symfony",
+        "cli",
+        "database",
+        "rsync",
+        "ssh"
+    ],
+    "authors": [
+        {
+          "name": "Martin Pöthig",
+          "email": "martin.poethig@xima.de"
+        },
+        {
+            "name": "Maik Schneider",
+            "email": "maik.schneider@xima.de"
+        }
+    ],
+    "support": {
+        "source": "https://github.com/xima-media/ddep",
+        "issues": "https://github.com/xima-media/ddep/issues"
+    },
+    "bin": [
+        "bin/ddep"
+    ],
+    "config": {
+        "sort-packages": true
+    }
+}
