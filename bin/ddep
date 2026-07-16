@@ -515,8 +515,12 @@ ssh_args=()
 FORCE=false
 
 cleanup() {
+    # Preserve the triggering exit status: under set -e, a failing last command
+    # in an EXIT trap would otherwise become the script's exit code.
+    local exit_code=$?
     [[ -n "${CONFIG_FILE:-}" ]] && rm -f "${CONFIG_FILE}"
     [[ -n "${tmpfile:-}" ]] && rm -f "${tmpfile}"
+    exit "${exit_code}"
 }
 trap cleanup EXIT
 
