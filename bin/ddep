@@ -533,6 +533,12 @@ confirm_destructive() {
     fi
 }
 
+# Allow sourcing (e.g. from tests) to load the functions above without running
+# the CLI below.
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    return 0
+fi
+
 # Main script execution
 command=""
 host=""
