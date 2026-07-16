@@ -190,3 +190,26 @@ ddep --host dev db:pull --env feature_xyz > dump.sql
 # Pipe an existing dump directly into the remote database
 cat dump.sql | ddep --host dev db:push --env feature_xyz
 ```
+
+## Security
+
+Every command talks to the **remote Docker daemon over SSH**
+(`DOCKER_HOST=ssh://…`). Docker access is root-equivalent on the target host:
+anyone who can reach the daemon can mount the host filesystem, read every
+container's secrets, and start privileged containers. The SSH user ddep connects
+as therefore has to be in the host's `docker` group (or root), so **granting a
+developer ddep access to a host is effectively granting them root on it.**
+
+Weigh this before rolling it out:
+
+- **Restrict production.** Prefer giving developers `dev`/`test` hosts only, and
+  keep `live` operations in CI with a dedicated, scoped identity.
+- **Reduce blast radius.** Consider fronting the daemon with a
+  [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) that
+  exposes only the API endpoints ddep needs, or rootless Docker on the host.
+- **`db:push`/`media:push` overwrite remote data.** They prompt for confirmation
+  (type the host slug on non-`dev` hosts); `--force` bypasses that, so treat
+  `--force` against a non-`dev` host as a privileged operation.
+- **Secrets stay off the command line.** The database password is read from the
+  remote `.app.env.provision` file and passed via the `MYSQL_PWD` environment
+  variable, never as an argument, and it is not printed under `--debug`.
