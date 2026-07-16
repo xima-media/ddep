@@ -213,3 +213,21 @@ Weigh this before rolling it out:
 - **Secrets stay off the command line.** The database password is read from the
   remote `.app.env.provision` file and passed via the `MYSQL_PWD` environment
   variable, never as an argument, and it is not printed under `--debug`.
+
+## Continuous integration
+
+ddep runs in CI as long as you account for the lack of a terminal:
+
+- **Provide SSH access.** The runner needs the private key and the host in its
+  `known_hosts` so the `ssh://` Docker connection authenticates non-interactively.
+- **Always pass `--env`.** Without a TTY there is no interactive environment
+  picker; ddep exits with an error asking for it.
+- **Pass `--force` for `db:push`/`media:push`.** The confirmation prompt cannot
+  be answered without a terminal.
+- **Exit codes are reliable.** A successful command returns `0` and any failure
+  returns non-zero, so `ddep … && next-step` and pipeline gating behave.
+
+```sh
+# Refresh a staging database non-interactively
+ddep --host test --env staging --force db:push < dump.sql
+```
