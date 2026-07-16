@@ -604,11 +604,17 @@ elif [ "${command}" = "db:push" ]; then
     get_mariadb_credentials db_host db_name db_user db_password db_port
     ensure_mariadb_image
 
-    # Import database dump from stdin and gunzip on the fly to database with remote container
-    # MYSQL_PWD is forwarded via -e (not -p) so the password never appears in argv/process listings
-    gunzip -c "${tmpfile}" | MYSQL_PWD="${db_password}" docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-        mariadb --host="${db_host}" --port="${db_port}" --user="${db_user}" \
-        "${db_name}"
+    # Import database dump from stdin and gunzip on the fly into the remote database.
+    # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
+    # (set -x) never echoes the password; it stays scoped to the mariadb run and
+    # is still forwarded via -e (not -p), so it never appears in argv either.
+    (
+        { set +x; } 2>/dev/null
+        export MYSQL_PWD="${db_password}"
+        gunzip -c "${tmpfile}" | docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+            mariadb --host="${db_host}" --port="${db_port}" --user="${db_user}" \
+            "${db_name}"
+    )
 
     if get_container_id container_id; then
         echo "Running database migration for ${APP_NAME}..."
@@ -629,8 +635,12 @@ elif [ "${command}" = "db:pull" ]; then
         # Convert JSON regex array into MariaDB REGEXP expression
         regex=$(IFS="|"; echo "${DB_EXCLUDE_TABLES[*]}")
 
-        # MYSQL_PWD is forwarded via -e (not -p) so the password never appears in argv/process listings
-        tables=$(MYSQL_PWD="${db_password}" docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+        # MYSQL_PWD is exported with tracing disabled so --debug never echoes it,
+        # and forwarded via -e (not -p) so it never appears in argv either.
+        tables=$(
+            { set +x; } 2>/dev/null
+            export MYSQL_PWD="${db_password}"
+            docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
             sh -c "mariadb \
                 --host '${db_host}' \
                 --port '${db_port}' \
@@ -647,13 +657,19 @@ elif [ "${command}" = "db:pull" ]; then
         done
     fi
 
-    MYSQL_PWD="${db_password}" docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-        mariadb-dump \
-        --host "${db_host}" \
-        --port "${db_port}" \
-        --user "${db_user}" \
-        --single-transaction \
-        --skip-lock-tables \
-        "${ignore_args[@]}" \
-        "${db_name}"
+    # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
+    # never echoes it, and forwarded via -e (not -p) so it never appears in argv.
+    (
+        { set +x; } 2>/dev/null
+        export MYSQL_PWD="${db_password}"
+        docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+            mariadb-dump \
+            --host "${db_host}" \
+            --port "${db_port}" \
+            --user "${db_user}" \
+            --single-transaction \
+            --skip-lock-tables \
+            "${ignore_args[@]}" \
+            "${db_name}"
+    )
 fi
