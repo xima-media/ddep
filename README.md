@@ -231,3 +231,15 @@ ddep runs in CI as long as you account for the lack of a terminal:
 # Refresh a staging database non-interactively
 ddep --host test --env staging --force db:push < dump.sql
 ```
+
+## Troubleshooting
+
+| Message | Cause / fix |
+|---------|-------------|
+| `bash >= 4.3 required, but running 3.2…` | macOS' default bash. `brew install bash` and put it before `/bin/bash` on your `PATH`. |
+| `required command(s) not found on PATH: …` | Install the missing tool(s) (`jq`, `docker`, `rsync`, `ssh`, `gzip`, `git`). |
+| `docker: command not found` when run via `ddev exec` | The ddev web container has no docker client. Run ddep on the **host** (where docker, ssh, and your agent live), not inside the container. |
+| `could not determine the project name` | Run ddep from inside the project's git working copy; it needs an `origin` remote. |
+| `host '…' is not configured` | The `--host` slug is missing from `hosts` in `.docker/ddep.json`. |
+| `No container found for project '…' and environment '…'` | Wrong `--env`, the stack isn't running, or `environments_path`/compose labels don't match. |
+| `no --env given and no terminal available` | Non-interactive run (CI/pipe) with no `--env`; pass it explicitly. |
