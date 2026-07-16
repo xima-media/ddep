@@ -108,6 +108,24 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #       | ddep --host dev --env branch-69 db:push
 
 # Functions
+check_requirements() {
+    local missing=()
+    local cmd
+    for cmd in docker jq ssh rsync gzip git; do
+        command -v "${cmd}" >/dev/null 2>&1 || missing+=("${cmd}")
+    done
+    if [[ "${#missing[@]}" -gt 0 ]]; then
+        echo "Error: required command(s) not found on PATH: ${missing[*]}" >&2
+        exit 1
+    fi
+
+    if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
+        echo "Error: bash >= 4.3 required, but running ${BASH_VERSION}." >&2
+        echo "       On macOS: brew install bash (and put it before /bin/bash on PATH)." >&2
+        exit 1
+    fi
+}
+
 load_default_config() {
     cat <<'JSON'
 {
@@ -537,6 +555,8 @@ if [ -z "${command}" ]; then
     echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull, logs" >&2
     exit 1
 fi
+
+check_requirements
 
 if [[ "${DEBUG}" == "true" ]]; then
     set -x
