@@ -160,6 +160,7 @@ load_default_config() {
       },
       "rsync": {
         "max_size_mb": 5,
+        "remote_path": "/var/www/html/app/public",
         "directories": [
           "fileadmin",
           "uploads"
@@ -211,6 +212,7 @@ load_default_config() {
       },
       "rsync": {
         "max_size_mb": 5,
+        "remote_path": "/var/www/html/app/public",
         "directories": [
           "upload"
         ],
@@ -335,6 +337,9 @@ parse_config_json() {
 
     # Rsync configuration
     RSYNC_MAX_SIZE_MB=$(jq -r "${APP_CONFIG}.rsync.max_size_mb" "${CONFIG_FILE}")
+
+    RSYNC_REMOTE_PATH=$(jq -r "${APP_CONFIG}.rsync.remote_path" "${CONFIG_FILE}")
+    RSYNC_REMOTE_PATH="${RSYNC_REMOTE_PATH%/}"
 
     mapfile -t RSYNC_DIRECTORIES < <(
         jq -r "${APP_CONFIG}.rsync.directories[]" "${CONFIG_FILE}"
@@ -612,7 +617,7 @@ if [ "${command}" = "media:push" ]; then
             echo "Directory public/${dir} does not exist, skipping..."
             continue
         fi
-        rsync -e 'docker exec -i' -avz "--max-size=${RSYNC_MAX_SIZE_MB}m" "${rsync_exclude_params[@]}" "$(pwd)/public/${dir}" "${container_id}":/var/www/html/app/public/
+        rsync -e 'docker exec -i' -avz "--max-size=${RSYNC_MAX_SIZE_MB}m" "${rsync_exclude_params[@]}" "$(pwd)/public/${dir}" "${container_id}:${RSYNC_REMOTE_PATH}/"
     done
 
 elif [ "${command}" = "media:pull" ]; then
@@ -623,13 +628,13 @@ elif [ "${command}" = "media:pull" ]; then
     fi
 
     for dir in "${RSYNC_DIRECTORIES[@]}"; do
-        if ! docker exec "${container_id}" [ -d "/var/www/html/app/public/${dir}" ]; then
-            echo "Directory /var/www/html/app/public/${dir} does not exist in container, skipping..."
+        if ! docker exec "${container_id}" [ -d "${RSYNC_REMOTE_PATH}/${dir}" ]; then
+            echo "Directory ${RSYNC_REMOTE_PATH}/${dir} does not exist in container, skipping..."
             continue
         fi
         # ensure local target directory exists
         mkdir -p "$(pwd)/public/${dir}"
-        rsync -e 'docker exec -i' -avz "--max-size=${RSYNC_MAX_SIZE_MB}m" "${rsync_exclude_params[@]}" "${container_id}":/var/www/html/app/public/"${dir}" "$(pwd)/public/"
+        rsync -e 'docker exec -i' -avz "--max-size=${RSYNC_MAX_SIZE_MB}m" "${rsync_exclude_params[@]}" "${container_id}:${RSYNC_REMOTE_PATH}/${dir}" "$(pwd)/public/"
     done
 
 elif [ "${command}" = "ssh" ]; then

@@ -103,9 +103,14 @@ default at that path — objects are merged key by key, but arrays and scalars
 are replaced outright, never appended to or merged element-by-element.
 
 The built-in defaults for each application (`db.migration`, `db.env.*`,
-`db.exclude_tables`, `rsync.max_size_mb`, `rsync.directories`,
-`rsync.exclude_paths`, `rsync.exclude_extensions`) live in `load_default_config()`
-inside `bin/ddep` — copy the path you want to change from there.
+`db.exclude_tables`, `rsync.max_size_mb`, `rsync.remote_path`,
+`rsync.directories`, `rsync.exclude_paths`, `rsync.exclude_extensions`) live in
+`load_default_config()` inside `bin/ddep` — copy the path you want to change
+from there.
+
+`rsync.remote_path` is the media directory inside the application container
+(default `/var/www/html/app/public`); override it if your image lays out the
+document root differently.
 
 For example, to replace the built-in `db:pull` table-exclude list for `symfony`:
 
