@@ -417,6 +417,14 @@ select_env() {
         exit 1
     fi
 
+    # The picker reads from the controlling terminal (not stdin, which may be a
+    # pipe, e.g. db:push). Without a terminal (CI), --env must be given explicitly.
+    if [[ ! -r /dev/tty ]]; then
+        echo "Error: no --env given and no terminal available to choose one." >&2
+        echo "       Pass --env <environment> explicitly." >&2
+        exit 1
+    fi
+
     echo "Select environment on ${host}:" >&2
 
     PS3="Environment: "
@@ -427,7 +435,7 @@ select_env() {
         fi
 
         echo "Invalid selection" >&2
-    done
+    done < /dev/tty
 }
 
 confirm_destructive() {
@@ -592,12 +600,18 @@ elif [ "${command}" = "ssh" ]; then
         echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
         exit 1
     fi
+    # Only allocate a TTY (-t) when running interactively; in CI/pipes -t fails
+    # with "the input device is not a TTY".
+    exec_flags="-i"
+    if [ -t 0 ] && [ -t 1 ]; then
+        exec_flags="-it"
+    fi
     if [ "${#ssh_args[@]}" -gt 0 ]; then
         # "${ssh_args[*]}" joins the arguments with a space into one command line
         # for the container shell to parse (ssh-style); no args opens a shell.
-        docker exec -it "${container_id}" /bin/bash -c "${ssh_args[*]}"
+        docker exec "${exec_flags}" "${container_id}" /bin/bash -c "${ssh_args[*]}"
     else
-        docker exec -it "${container_id}" /bin/bash
+        docker exec "${exec_flags}" "${container_id}" /bin/bash
     fi
 
 elif [ "${command}" = "logs" ]; then
