@@ -503,10 +503,12 @@ while [[ $# -gt 0 ]]; do
         ssh)
             command="$1"
             shift
-            # Store all remaining arguments as ssh command, preserving quoted strings
+            # Everything after "ssh" is the command to run in the container. As with
+            # "ssh host <cmd>", the arguments are joined with spaces and executed by
+            # the container shell, so quote a command containing spaces as one string.
             if [[ $# -gt 0 ]]; then
-            ssh_args+=("$@")
-            shift $#
+                ssh_args+=("$@")
+                shift $#
             fi
             ;;
         *)
@@ -583,6 +585,8 @@ elif [ "${command}" = "ssh" ]; then
         exit 1
     fi
     if [ "${#ssh_args[@]}" -gt 0 ]; then
+        # "${ssh_args[*]}" joins the arguments with a space into one command line
+        # for the container shell to parse (ssh-style); no args opens a shell.
         docker exec -it "${container_id}" /bin/bash -c "${ssh_args[*]}"
     else
         docker exec -it "${container_id}" /bin/bash
