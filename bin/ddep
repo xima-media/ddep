@@ -567,8 +567,14 @@ if [ -z "${host}" ]; then
     host="dev"
 fi
 
-# Needed before Docker environment lookup
-git_project_name="$(basename "$(git remote get-url origin)")"
+# Needed before Docker environment lookup; the project name comes from the origin
+# remote, so ddep must run inside a git working copy that has one.
+if ! origin_url="$(git remote get-url origin 2>/dev/null)"; then
+    echo "Error: could not determine the project name." >&2
+    echo "       ddep must be run from inside a git working copy with an 'origin' remote." >&2
+    exit 1
+fi
+git_project_name="$(basename "${origin_url}")"
 git_project_name="${git_project_name%.git}"
 
 load_config
