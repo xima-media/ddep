@@ -386,7 +386,18 @@ get_mariadb_credentials() {
 }
 
 ensure_mariadb_image() {
-    docker pull "mariadb:${MARIADB_VERSION}" >/dev/null 2>&1
+    local image="mariadb:${MARIADB_VERSION}"
+    local output
+    if ! output="$(docker pull "${image}" 2>&1)"; then
+        # A pull can fail transiently or offline; only fatal if the image is not
+        # already available on the (remote) daemon.
+        if ! docker image inspect "${image}" >/dev/null 2>&1; then
+            echo "Error: could not pull ${image} and it is not available:" >&2
+            echo "${output}" >&2
+            exit 1
+        fi
+        echo "Warning: could not refresh ${image}; using the existing image." >&2
+    fi
 }
 
 rsync_exclude_params() {
