@@ -59,6 +59,9 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #
 # Options:
 #   --debug                 Enable bash execution tracing
+#   --force                 Skip the confirmation prompt for destructive
+#                           operations (db:push, media:push). Required for
+#                           non-interactive/CI use.
 #   --host <host>           Target host from .docker/ddep.json
 #                           Default: dev
 #
@@ -427,11 +430,47 @@ select_env() {
     done
 }
 
+confirm_destructive() {
+    # $1 = human-readable description of the destructive action.
+    # Confirmation is read from the controlling terminal (/dev/tty), not stdin,
+    # because db:push consumes stdin. Non-dev hosts require typing the host slug
+    # for extra safety; non-interactive runs (CI, no TTY) must pass --force.
+    local action="$1"
+    local expected="yes"
+    local answer=""
+
+    if [[ "${FORCE}" == "true" ]]; then
+        return 0
+    fi
+
+    if [[ "${host}" != "dev" ]]; then
+        expected="${host}"
+    fi
+
+    if [[ ! -r /dev/tty ]]; then
+        echo "Error: refusing to ${action}" >&2
+        echo "       on host '${host}' (${target_env}) without confirmation." >&2
+        echo "       No terminal available; re-run with --force to proceed." >&2
+        exit 1
+    fi
+
+    echo "WARNING: about to ${action}" >&2
+    echo "         host '${host}' (${REMOTE_DOCKER_HOST}), environment '${target_env}'." >&2
+    printf "Type '%s' to continue: " "${expected}" >&2
+    read -r answer < /dev/tty
+
+    if [[ "${answer}" != "${expected}" ]]; then
+        echo "Aborted." >&2
+        exit 1
+    fi
+}
+
 # Main script execution
 command=""
 host=""
 tmpfile=""
 ssh_args=()
+FORCE=false
 
 cleanup() {
     [[ -n "${CONFIG_FILE:-}" ]] && rm -f "${CONFIG_FILE}"
@@ -452,6 +491,10 @@ while [[ $# -gt 0 ]]; do
         --env)
             target_env="$2"
             shift 2
+            ;;
+        --force)
+            FORCE=true
+            shift
             ;;
         media:push|media:pull|db:push|db:pull|logs)
             command="$1"
@@ -502,6 +545,7 @@ fi
 
 # Run commands
 if [ "${command}" = "media:push" ]; then
+    confirm_destructive "overwrite media files in the remote container"
     rsync_exclude_params
     if ! get_container_id container_id; then
         echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
@@ -552,6 +596,7 @@ elif [ "${command}" = "logs" ]; then
     docker logs -f "${container_id}"
 
 elif [ "${command}" = "db:push" ]; then
+    confirm_destructive "overwrite the remote database and run migrations"
     # Create temporary file for compressed mysqldump from stdin; cleanup runs via the global EXIT trap
     tmpfile=$(mktemp)
     gzip -c > "$tmpfile"

@@ -140,6 +140,11 @@ table you still want excluded, not just the ones you're adding.
 | `ssh [command]` | Open a shell, or execute a command, inside the remote container |
 | `logs` | Follow the remote application container's log output |
 
+`db:push` and `media:push` overwrite data in the remote environment and ask for
+confirmation before running. On non-`dev` hosts you must type the host slug to
+proceed; pass `--force` to skip the prompt (required in CI, where there is no
+terminal).
+
 ## Options
 
 Options may appear before or after the command, in any order.
@@ -147,6 +152,7 @@ Options may appear before or after the command, in any order.
 | Option | Description |
 |--------|--------------|
 | `--debug` | Enable bash execution tracing |
+| `--force` | Skip the confirmation prompt for destructive operations (`db:push`, `media:push`). Required for non-interactive/CI use |
 | `--host <host>` | Target host from `.docker/ddep.json`. Default: `dev` |
 | `--env <environment>` | Remote environment slug — the part of the remote docker-compose project directory name after `<project>_`. Default: interactively pick from the environments currently deployed on `--host` |
 
