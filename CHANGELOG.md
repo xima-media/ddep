@@ -20,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The database password is no longer echoed to stderr under `--debug`.
+- Neither the database password nor the other secrets held in the remote
+  `.app.env.provision` file are echoed to stderr under `--debug`.
 - Environment selection and `ssh` work without a controlling terminal (CI-safe).
 - `db:push` rejects empty stdin instead of silently importing nothing.
 - Clear error when run outside a git working copy or without an `origin` remote.
