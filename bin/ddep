@@ -456,16 +456,29 @@ rsync_exclude_params() {
 }
 
 get_container_id() {
+    # Returns 0 and sets the nameref when exactly one container matches.
+    # Returns 1 (no match) or 2 (more than one match) and prints a specific
+    # message to stderr, so callers can tell the two failure modes apart instead
+    # of reporting every failure as "not found".
     local -n _container_id=$1
     local environment_path="${ENVIRONMENTS_PATH}/${git_project_name}_${target_env}"
-    _container_id=$(docker ps -q --filter "label=com.docker.compose.project.working_dir=${environment_path}" --filter "label=com.docker.compose.service=${APP_NAME}")
-    if [ -z "$_container_id" ]
-    then
-        return 1
-    elif [ "$(echo "$_container_id" | wc -l)" -gt 1 ]
-    then
+    local ids
+    ids=$(docker ps -q \
+        --filter "label=com.docker.compose.project.working_dir=${environment_path}" \
+        --filter "label=com.docker.compose.service=${APP_NAME}")
+
+    if [ -z "$ids" ]; then
+        echo "Error: no container found for project '${git_project_name}', environment '${target_env}', service '${APP_NAME}'." >&2
         return 1
     fi
+
+    if [ "$(printf '%s\n' "$ids" | wc -l)" -gt 1 ]; then
+        echo "Error: multiple containers matched project '${git_project_name}', environment '${target_env}', service '${APP_NAME}':" >&2
+        printf '%s\n' "$ids" | sed 's/^/  /' >&2
+        return 2
+    fi
+
+    _container_id=$ids
     return 0
 }
 
@@ -671,7 +684,6 @@ if [ "${command}" = "media:push" ]; then
     confirm_destructive "overwrite media files in the remote container"
     rsync_exclude_params
     if ! get_container_id container_id; then
-        echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
         exit 1
     fi
 
@@ -686,7 +698,6 @@ if [ "${command}" = "media:push" ]; then
 elif [ "${command}" = "media:pull" ]; then
     rsync_exclude_params
     if ! get_container_id container_id; then
-        echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
         exit 1
     fi
 
@@ -702,7 +713,6 @@ elif [ "${command}" = "media:pull" ]; then
 
 elif [ "${command}" = "ssh" ]; then
     if ! get_container_id container_id; then
-        echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
         exit 1
     fi
     # Only allocate a TTY (-t) when running interactively; in CI/pipes -t fails
@@ -721,7 +731,6 @@ elif [ "${command}" = "ssh" ]; then
 
 elif [ "${command}" = "logs" ]; then
     if ! get_container_id container_id; then
-        echo "Error: No container found for project '${git_project_name}' and environment '${target_env}'" >&2
         exit 1
     fi
     docker logs -f "${container_id}"
@@ -761,7 +770,10 @@ elif [ "${command}" = "db:push" ]; then
             "${db_name}"
     )
 
-    if get_container_id container_id; then
+    # The DB import already succeeded; a missing/ambiguous container here only
+    # means the migration is skipped, so this is a warning, not a fatal error.
+    # Suppress get_container_id's own message and keep the softer warning.
+    if get_container_id container_id 2>/dev/null; then
         echo "Running database migration for ${APP_NAME}..."
 
         docker exec "${container_id}" \
