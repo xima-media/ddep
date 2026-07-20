@@ -66,6 +66,52 @@ setup() {
     [ -z "$output" ]
 }
 
+@test "get_mariadb_credentials keeps secrets out of the --debug trace" {
+    # The ssh stub must be a real executable, not a shell function: a function's
+    # own internals would be traced and make this test pass/fail for the wrong
+    # reason.
+    local stub="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "$stub"
+    cat > "$stub/ssh" <<'STUB'
+#!/bin/sh
+case "$*" in
+    *"test -f"*) exit 0 ;;
+    *"cat "*)
+        printf 'DB_HOST=db.internal\nDB_NAME=appdb\nDB_USER=appuser\nDB_PASS=SUPERSECRET123\nAPP_SECRET=other-secret\nDB_PORT=3306\n'
+        ;;
+esac
+STUB
+    chmod +x "$stub/ssh"
+
+    PATH="$stub:$PATH" run bash -c '
+        source "$DDEP"
+        ENVIRONMENTS_PATH=/opt/docker/compose
+        git_project_name=proj
+        target_env=staging
+        REMOTE_DOCKER_HOST=user@host
+        DB_ENV_HOST=DB_HOST
+        DB_ENV_DBNAME=DB_NAME
+        DB_ENV_USER=DB_USER
+        DB_ENV_PASSWORD=DB_PASS
+        DB_ENV_PORT=DB_PORT
+        DEBUG=true
+        set -x
+        get_mariadb_credentials h n u p prt
+        set +x
+        echo "RESULT=$h|$n|$u|$p|$prt"
+    '
+    [ "$status" -eq 0 ]
+
+    # The credentials still reach the caller ...
+    [[ "$output" == *"RESULT=db.internal|appdb|appuser|SUPERSECRET123|3306"* ]]
+
+    # ... but nothing from the env file may appear in the trace. Drop the one
+    # intentional RESULT line, then assert no secret survives anywhere else.
+    local trace="${output/RESULT=db.internal|appdb|appuser|SUPERSECRET123|3306/}"
+    [[ "$trace" != *"SUPERSECRET123"* ]]
+    [[ "$trace" != *"other-secret"* ]]
+}
+
 @test "load_config deep-merges local config over the built-in defaults" {
     run bash -c '
         source "$DDEP"
