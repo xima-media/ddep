@@ -210,9 +210,11 @@ Weigh this before rolling it out:
 - **`db:push`/`media:push` overwrite remote data.** They prompt for confirmation
   (type the host slug on non-`dev` hosts); `--force` bypasses that, so treat
   `--force` against a non-`dev` host as a privileged operation.
-- **Secrets stay off the command line.** The database password is read from the
-  remote `.app.env.provision` file and passed via the `MYSQL_PWD` environment
-  variable, never as an argument, and it is not printed under `--debug`.
+- **Secrets stay off the command line and out of traces.** The database password
+  is read from the remote `.app.env.provision` file and passed via the `MYSQL_PWD`
+  environment variable, never as an argument. Both reading that file and using the
+  password are excluded from `--debug` tracing, so neither the password nor the
+  file's other secrets are echoed.
 
 ## Continuous integration
 

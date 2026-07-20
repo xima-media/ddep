@@ -405,6 +405,13 @@ get_mariadb_credentials() {
         exit 1
     fi
 
+    # The env file holds the database password and every other application secret,
+    # so keep the whole read/parse out of the --debug trace: set -x would echo
+    # both the full file contents and the parsed password. env_content is scoped
+    # to this function so those secrets do not linger in a global afterwards.
+    { set +x; } 2>/dev/null
+
+    local env_content
     env_content=$(ssh "${REMOTE_DOCKER_HOST}" "cat '${environment_file_path}'")
 
     _mariadb_host=$(get_env_value "${DB_ENV_HOST}" <<< "${env_content}")
@@ -414,6 +421,10 @@ get_mariadb_credentials() {
     _mariadb_port=$(get_env_value "${DB_ENV_PORT}" <<< "${env_content}")
 
     _mariadb_port=${_mariadb_port:-3306}
+
+    if [[ "${DEBUG}" == "true" ]]; then
+        set -x
+    fi
 }
 
 ensure_mariadb_image() {
