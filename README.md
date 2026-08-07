@@ -144,6 +144,7 @@ table you still want excluded, not just the ones you're adding.
 | `db:pull` | Export the remote database to stdout |
 | `ssh [command]` | Open a shell, or execute a command, inside the remote container |
 | `logs` | Follow the remote application container's log output |
+| `config` | Print the resolved configuration (`.docker/ddep.json` deep-merged over the built-in defaults) as JSON |
 
 `db:push` and `media:push` overwrite data in the remote environment and ask for
 confirmation before running. On non-`dev` hosts you must type the host slug to
@@ -189,6 +190,10 @@ ddep --host dev db:pull --env feature_xyz > dump.sql
 
 # Pipe an existing dump directly into the remote database
 cat dump.sql | ddep --host dev db:push --env feature_xyz
+
+# Inspect the fully resolved configuration (no git repo, host or env needed)
+ddep config
+ddep config | jq '.settings.symfony.rsync'
 ```
 
 ## Security
