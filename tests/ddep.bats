@@ -52,6 +52,28 @@ setup() {
     [[ "$output" == *"--env requires a value"* ]]
 }
 
+@test "config prints the resolved config as JSON, outside a git repo" {
+    mkdir -p "$BATS_TEST_TMPDIR/.docker"
+    cp "$FIXTURES/local.json" "$BATS_TEST_TMPDIR/.docker/ddep.json"
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" config'
+    [ "$status" -eq 0 ]
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" config | jq -r "
+        .mariadb_version,
+        (.settings.symfony.db.exclude_tables | length),
+        (.settings.typo3 | type)
+    "'
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "11.4" ]  # local override applied
+    [ "${lines[1]}" = "2" ]     # array replaced, not appended
+    [ "${lines[2]}" = "object" ] # unrelated app (typo3) preserved from defaults
+}
+
+@test "config exits 1 without .docker/ddep.json, like other commands" {
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" config'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"missing"* ]]
+}
+
 # --- functions (sourced)
 
 @test "get_env_value returns the value for a matching key" {

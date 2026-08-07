@@ -58,6 +58,8 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   db:pull                 Export the remote database to stdout
 #   ssh [command]           Open a shell or execute a command inside the remote container
 #   logs                    Follow the remote application container's log output
+#   config                  Print the resolved configuration (.docker/ddep.json
+#                           deep-merged over the built-in defaults) as JSON
 #
 # Options:
 #   -h, --help              Show usage and exit
@@ -110,6 +112,10 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   # Export a remote TYPO3 database and import it locally
 #   ssh dev@vm "cd /var/www/html/typo3/current && vendor/bin/typo3 database:export" \
 #       | ddep --host dev --env branch-69 db:push
+#
+#   # Inspect the fully resolved configuration (no git repo, host or env needed)
+#   ddep config
+#   ddep config | jq '.settings.symfony.rsync'
 
 # Functions
 usage() {
@@ -123,6 +129,7 @@ Commands:
   db:pull      Export the remote database to stdout
   ssh [cmd]    Open a shell, or run a command, in the remote container
   logs         Follow the remote application container's log output
+  config       Print the resolved configuration as JSON
 
 Options:
   --host <host>   Target host from .docker/ddep.json (default: dev)
@@ -622,7 +629,7 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
-        media:push|media:pull|db:push|db:pull|logs)
+        media:push|media:pull|db:push|db:pull|logs|config)
             command="$1"
             shift
             ;;
@@ -644,7 +651,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 if [ -z "${command}" ]; then
-    echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull, logs" >&2
+    echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull, logs, config" >&2
     exit 1
 fi
 
@@ -657,6 +664,15 @@ fi
 # Set defaults if not provided
 if [ -z "${host}" ]; then
     host="dev"
+fi
+
+# config only inspects .docker/ddep.json merged with the built-in defaults; it
+# does not touch git, docker or any remote host, and intentionally skips
+# validate_config so a broken local config can still be inspected.
+if [ "${command}" = "config" ]; then
+    load_config
+    jq '.' "${CONFIG_FILE}"
+    exit 0
 fi
 
 # Needed before Docker environment lookup; the project name comes from the origin
