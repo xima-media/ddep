@@ -60,6 +60,8 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   logs                    Follow the remote application container's log output
 #   config                  Print the resolved configuration (.docker/ddep.json
 #                           deep-merged over the built-in defaults) as JSON
+#   info                    Print details about the remote application container as
+#                           JSON (currently just container_id; more may be added)
 #
 # Options:
 #   -h, --help              Show usage and exit
@@ -116,6 +118,9 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   # Inspect the fully resolved configuration (no git repo, host or env needed)
 #   ddep config
 #   ddep config | jq '.settings.symfony.rsync'
+#
+#   # Get the dev environment's container id (e.g. for reset-job tooling)
+#   ddep --host dev --env feature_xyz info | jq -r '.container_id'
 
 # Functions
 usage() {
@@ -130,6 +135,7 @@ Commands:
   ssh [cmd]    Open a shell, or run a command, in the remote container
   logs         Follow the remote application container's log output
   config       Print the resolved configuration as JSON
+  info         Print details about the remote application container as JSON
 
 Options:
   --host <host>   Target host from .docker/ddep.json (default: dev)
@@ -629,7 +635,7 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
-        media:push|media:pull|db:push|db:pull|logs|config)
+        media:push|media:pull|db:push|db:pull|logs|config|info)
             command="$1"
             shift
             ;;
@@ -651,7 +657,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 if [ -z "${command}" ]; then
-    echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull, logs, config" >&2
+    echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull, logs, config, info" >&2
     exit 1
 fi
 
@@ -750,6 +756,12 @@ elif [ "${command}" = "logs" ]; then
         exit 1
     fi
     docker logs -f "${container_id}"
+
+elif [ "${command}" = "info" ]; then
+    if ! get_container_id container_id; then
+        exit 1
+    fi
+    jq -n --arg container_id "${container_id}" '{container_id: $container_id}'
 
 elif [ "${command}" = "db:push" ]; then
     if [ -t 0 ]; then

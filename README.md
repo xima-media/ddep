@@ -145,6 +145,7 @@ table you still want excluded, not just the ones you're adding.
 | `ssh [command]` | Open a shell, or execute a command, inside the remote container |
 | `logs` | Follow the remote application container's log output |
 | `config` | Print the resolved configuration (`.docker/ddep.json` deep-merged over the built-in defaults) as JSON |
+| `info` | Print details about the remote application container as JSON (currently just `container_id`; more may be added) |
 
 `db:push` and `media:push` overwrite data in the remote environment and ask for
 confirmation before running. On non-`dev` hosts you must type the host slug to
@@ -194,6 +195,9 @@ cat dump.sql | ddep --host dev db:push --env feature_xyz
 # Inspect the fully resolved configuration (no git repo, host or env needed)
 ddep config
 ddep config | jq '.settings.symfony.rsync'
+
+# Get the dev environment's container id (e.g. for reset-job tooling)
+ddep --host dev --env feature_xyz info | jq -r '.container_id'
 ```
 
 ## Security
