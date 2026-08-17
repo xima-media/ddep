@@ -134,6 +134,13 @@ For example, to replace the built-in `db:pull` table-exclude list for `symfony`:
 Since this replaces (rather than appends to) the built-in list, include every
 table you still want excluded, not just the ones you're adding.
 
+`exclude_tables` only ever skips *rows*, never the table itself: `db:pull` dumps
+every table's structure (including excluded ones), and only omits data for the
+excluded ones. That way a table like `sessions` — deliberately excluded because
+it holds live, per-environment data that a dump should never overwrite — still
+exists (empty) after a `db:push`, even on a brand-new environment that never
+had it before.
+
 ## Commands
 
 | Command | Description |

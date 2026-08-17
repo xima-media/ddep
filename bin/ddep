@@ -55,7 +55,10 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   media:pull              Pull media files from the remote application container
 #   db:push                 Import a database dump (read from stdin) into the remote
 #                           database, then run the application's DB migration
-#   db:pull                 Export the remote database to stdout
+#   db:pull                 Export the remote database to stdout. Tables matching
+#                           db.exclude_tables are dumped structure-only (no rows),
+#                           so they still exist after a db:push, even on a
+#                           brand-new environment that never had them before.
 #   ssh [command]           Open a shell or execute a command inside the remote container
 #   logs                    Follow the remote application container's log output
 #   config                  Print the resolved configuration (.docker/ddep.json
@@ -842,11 +845,17 @@ elif [ "${command}" = "db:pull" ]; then
         done
     fi
 
+    # Dump structure and data separately, concatenated into one stdout stream.
+    # The structure half covers every table, INCLUDING ones in exclude_tables, so
+    # an excluded table (e.g. a sessions table) still exists — with the correct,
+    # empty schema — after a db:push, even on a brand-new environment that never
+    # had it. Only its rows are skipped, by the data half below.
     # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
     # never echoes it, and forwarded via -e (not -p) so it never appears in argv.
     (
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
+
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
             mariadb-dump \
             --host "${db_host}" \
@@ -854,6 +863,17 @@ elif [ "${command}" = "db:pull" ]; then
             --user "${db_user}" \
             --single-transaction \
             --skip-lock-tables \
+            --no-data \
+            "${db_name}"
+
+        docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+            mariadb-dump \
+            --host "${db_host}" \
+            --port "${db_port}" \
+            --user "${db_user}" \
+            --single-transaction \
+            --skip-lock-tables \
+            --no-create-info \
             "${ignore_args[@]}" \
             "${db_name}"
     )

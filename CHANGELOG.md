@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mariadb` image pull failures are surfaced instead of swallowed.
 - Successful runs return exit status 0 (the cleanup trap no longer clobbers it).
 - Validation of `--host` and `--env` option arguments.
+- `db:pull` now dumps structure for every table (including ones in
+  `exclude_tables`) and only omits data for excluded ones, so a table like
+  `sessions` still exists after `db:push` on a brand-new environment that
+  never had it before.
 - Accurate documentation of `ssh` argument handling.
 
 [Unreleased]: https://github.com/xima-media/ddep/commits/main
