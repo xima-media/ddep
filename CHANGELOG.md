@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preflight check for the required commands and bash >= 4.3.
 - Configurable container media path via `rsync.remote_path`.
 - EditorConfig, shellcheck configuration, and a bats test suite.
+- `db:pull` compresses the dump inside the remote container before transfer, and
+  `db:push` transfers gzip input unchanged (compressing plain SQL locally) before
+  decompressing it in the remote container. This makes large transfers faster
+  while preserving support for plain SQL on stdin.
 
 ### Fixed
 
