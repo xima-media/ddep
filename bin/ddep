@@ -54,11 +54,14 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   media:push              Push local media files to the remote application container
 #   media:pull              Pull media files from the remote application container
 #   db:push                 Import a database dump (read from stdin) into the remote
-#                           database, then run the application's DB migration
-#   db:pull                 Export the remote database to stdout. Tables matching
-#                           db.exclude_tables are dumped structure-only (no rows),
-#                           so they still exist after a db:push, even on a
-#                           brand-new environment that never had them before.
+#                           database, then run the application's DB migration. A
+#                           gzip-compressed stream is detected and passed through;
+#                           plain SQL is gzip-compressed here before it is sent.
+#   db:pull                 Export the remote database to stdout as a gzip stream.
+#                           Tables matching db.exclude_tables are dumped
+#                           structure-only (no rows), so they still exist after a
+#                           db:push, even on a brand-new environment that never
+#                           had them before.
 #   ssh [command]           Open a shell or execute a command inside the remote container
 #   logs                    Follow the remote application container's log output
 #   config                  Print the resolved configuration (.docker/ddep.json
@@ -105,16 +108,16 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   # Follow the dev application container's log output
 #   ddep --host dev logs
 #
-#   # Import a database dump into the dev environment
-#   ddep --host dev db:push --env feature_xyz < dump.sql
+#   # Import a database dump into the dev environment (plain SQL or gzip, both work)
+#   ddep --host dev db:push --env feature_xyz < dump.sql.gz
 #
-#   # Export the dev database to a dump file
-#   ddep --host dev db:pull --env feature_xyz > dump.sql
+#   # Export the dev database to a dump file (already gzip-compressed)
+#   ddep --host dev db:pull --env feature_xyz > dump.sql.gz
 #
 #   # Pipe an existing dump directly into the remote database
-#   cat dump.sql | ddep --host dev db:push --env feature_xyz
+#   cat dump.sql.gz | ddep --host dev db:push --env feature_xyz
 #
-#   # Export a remote TYPO3 database and import it locally
+#   # Export a remote TYPO3 database (plain SQL) and import it locally
 #   ssh dev@vm "cd /var/www/html/typo3/current && vendor/bin/typo3 database:export" \
 #       | ddep --host dev --env branch-69 db:push
 #
@@ -133,8 +136,9 @@ Usage: ddep [options] <command>
 Commands:
   media:push   Push local media files to the remote application container
   media:pull   Pull media files from the remote application container
-  db:push      Import a database dump (stdin) into the remote DB, then migrate
-  db:pull      Export the remote database to stdout
+  db:push      Import a database dump (stdin, plain SQL or gzip) into the remote
+               DB, then migrate
+  db:pull      Export the remote database to stdout, gzip-compressed
   ssh [cmd]    Open a shell, or run a command, in the remote container
   logs         Follow the remote application container's log output
   config       Print the resolved configuration as JSON
@@ -768,14 +772,24 @@ elif [ "${command}" = "info" ]; then
 
 elif [ "${command}" = "db:push" ]; then
     if [ -t 0 ]; then
-        echo "Error: db:push reads the SQL dump from stdin; pipe one in, e.g.:" >&2
-        echo "       ddep --host dev db:push < dump.sql" >&2
+        echo "Error: db:push reads the SQL dump (plain or gzip) from stdin; pipe one in, e.g.:" >&2
+        echo "       ddep --host dev db:push < dump.sql.gz" >&2
         exit 1
     fi
 
-    # Create temporary file for compressed mysqldump from stdin; cleanup runs via the global EXIT trap
+    # Buffer stdin to a file; cleanup runs via the global EXIT trap.
     tmpfile=$(mktemp)
-    gzip -c > "$tmpfile"
+    cat > "${tmpfile}"
+
+    # ddep db:pull emits a gzip stream (its two dumps concatenated as a
+    # multi-member gzip stream); detect that by magic byte so a plain-SQL dump
+    # piped in some other way (e.g. a raw mysqldump/TYPO3 export) still works,
+    # by compressing it here instead. Either way, the file that crosses the
+    # SSH-tunnelled Docker connection below is compressed, not plain SQL.
+    if [ "$(head -c2 "${tmpfile}" | od -An -tx1 | tr -d ' \n')" != "1f8b" ]; then
+        gzip -c "${tmpfile}" > "${tmpfile}.gz"
+        mv "${tmpfile}.gz" "${tmpfile}"
+    fi
 
     # gzip always writes a header, so empty stdin yields a valid-but-empty archive;
     # verify the decompressed stream actually contains data before proceeding.
@@ -789,16 +803,19 @@ elif [ "${command}" = "db:push" ]; then
     get_mariadb_credentials db_host db_name db_user db_password db_port
     ensure_mariadb_image
 
-    # Import database dump from stdin and gunzip on the fly into the remote database.
+    # Send the compressed dump as-is and gunzip it inside the container, so the
+    # SSH-tunnelled Docker connection carries compressed bytes instead of plain
+    # SQL — meaningfully faster for large dumps over a slow/distant link.
     # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
     # (set -x) never echoes the password; it stays scoped to the mariadb run and
     # is still forwarded via -e (not -p), so it never appears in argv either.
     (
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
-        gunzip -c "${tmpfile}" | docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            mariadb --host="${db_host}" --port="${db_port}" --user="${db_user}" \
-            "${db_name}"
+        docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+            sh -c 'gunzip -c | mariadb --host="$1" --port="$2" --user="$3" "$4"' \
+            sh "${db_host}" "${db_port}" "${db_user}" "${db_name}" \
+            < "${tmpfile}"
     )
 
     # The DB import already succeeded; a missing/ambiguous container here only
@@ -845,7 +862,10 @@ elif [ "${command}" = "db:pull" ]; then
         done
     fi
 
-    # Dump structure and data separately, concatenated into one stdout stream.
+    # Dump structure and data separately, each gzip-compressed inside the
+    # container before it crosses the SSH-tunnelled Docker connection, then
+    # concatenated into one multi-member gzip stream on stdout (gunzip handles
+    # concatenated gzip members transparently, decompressing back-to-back).
     # The structure half covers every table, INCLUDING ones in exclude_tables, so
     # an excluded table (e.g. a sessions table) still exists — with the correct,
     # empty schema — after a db:push, even on a brand-new environment that never
@@ -857,24 +877,11 @@ elif [ "${command}" = "db:pull" ]; then
         export MYSQL_PWD="${db_password}"
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            mariadb-dump \
-            --host "${db_host}" \
-            --port "${db_port}" \
-            --user "${db_user}" \
-            --single-transaction \
-            --skip-lock-tables \
-            --no-data \
-            "${db_name}"
+            sh -c 'mariadb-dump --host="$1" --port="$2" --user="$3" --single-transaction --skip-lock-tables --no-data "$4" | gzip' \
+            sh "${db_host}" "${db_port}" "${db_user}" "${db_name}"
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            mariadb-dump \
-            --host "${db_host}" \
-            --port "${db_port}" \
-            --user "${db_user}" \
-            --single-transaction \
-            --skip-lock-tables \
-            --no-create-info \
-            "${ignore_args[@]}" \
-            "${db_name}"
+            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
+            sh "${db_host}" "${db_port}" "${db_user}" "${ignore_args[@]}" "${db_name}"
     )
 fi

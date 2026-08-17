@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preflight check for the required commands and bash >= 4.3.
 - Configurable container media path via `rsync.remote_path`.
 - EditorConfig, shellcheck configuration, and a bats test suite.
+- `db:pull`/`db:push` compress the dump inside the remote container before it
+  crosses the SSH-tunnelled Docker connection (not just at rest), meaningfully
+  faster for large databases. `db:push` still accepts plain, uncompressed SQL
+  on stdin, detected automatically, for backward compatibility.
 
 ### Fixed
 

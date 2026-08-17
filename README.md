@@ -147,8 +147,8 @@ had it before.
 |---------|--------------|
 | `media:push` | Push local media files to the remote application container |
 | `media:pull` | Pull media files from the remote application container |
-| `db:push` | Import a database dump (read from stdin) into the remote database, then run the application's DB migration |
-| `db:pull` | Export the remote database to stdout |
+| `db:push` | Import a database dump (read from stdin, plain SQL or gzip) into the remote database, then run the application's DB migration |
+| `db:pull` | Export the remote database to stdout, gzip-compressed |
 | `ssh [command]` | Open a shell, or execute a command, inside the remote container |
 | `logs` | Follow the remote application container's log output |
 | `config` | Print the resolved configuration (`.docker/ddep.json` deep-merged over the built-in defaults) as JSON |
@@ -158,6 +158,13 @@ had it before.
 confirmation before running. On non-`dev` hosts you must type the host slug to
 proceed; pass `--force` to skip the prompt (required in CI, where there is no
 terminal).
+
+`db:pull`/`db:push` compress the dump *before* it crosses the SSH-tunnelled
+Docker connection (`mariadb-dump | gzip` runs inside the remote container, and
+`db:push` sends the compressed bytes as-is and `gunzip`s them inside the
+container too), not just at rest — meaningfully faster for large databases
+over a slow or distant link. `db:push` also accepts plain, uncompressed SQL on
+stdin (detected automatically) for backward compatibility.
 
 ## Options
 
@@ -190,14 +197,14 @@ ddep --host dev ssh "vendor/bin/typo3 list"
 # Follow the dev application container's log output
 ddep --host dev logs
 
-# Import a database dump into the dev environment
-ddep --host dev db:push --env feature_xyz < dump.sql
+# Import a database dump into the dev environment (plain SQL or gzip, both work)
+ddep --host dev db:push --env feature_xyz < dump.sql.gz
 
-# Export the dev database to a dump file
-ddep --host dev db:pull --env feature_xyz > dump.sql
+# Export the dev database to a dump file (already gzip-compressed)
+ddep --host dev db:pull --env feature_xyz > dump.sql.gz
 
 # Pipe an existing dump directly into the remote database
-cat dump.sql | ddep --host dev db:push --env feature_xyz
+cat dump.sql.gz | ddep --host dev db:push --env feature_xyz
 
 # Inspect the fully resolved configuration (no git repo, host or env needed)
 ddep config
@@ -247,7 +254,7 @@ ddep runs in CI as long as you account for the lack of a terminal:
 
 ```sh
 # Refresh a staging database non-interactively
-ddep --host test --env staging --force db:push < dump.sql
+ddep --host test --env staging --force db:push < dump.sql.gz
 ```
 
 ## Troubleshooting
