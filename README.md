@@ -111,9 +111,13 @@ This is the **only** place `app`/host connection info come from — `ddep.json`
 deliberate: exactly one file owns "which app template" and "how do I connect
 to this host," so the two can never silently disagree.
 
-No new local dependency to read it: `ddep` runs a pinned
-[`mikefarah/yq`](https://github.com/mikefarah/yq) Docker image (not a
-host-installed `yq`), since `docker` is already required above. This matters
+No new local dependency is required to read it: `ddep` prefers a verified
+host-installed [`mikefarah/yq`](https://github.com/mikefarah/yq) and otherwise
+runs the pinned Docker image. This matters because "yq" is not one tool across
+platforms — e.g. Debian/Ubuntu's `apt install yq` installs an unrelated Python
+package ([kislyuk/yq](https://github.com/kislyuk/yq)) with different syntax and
+flags. Verifying the local implementation and pinning the fallback image avoid
+accidentally invoking that incompatible tool.
 because "yq" is not one tool across platforms — e.g. Debian/Ubuntu's `apt
 install yq` installs an unrelated Python package
 ([kislyuk/yq](https://github.com/kislyuk/yq)) with different syntax and
