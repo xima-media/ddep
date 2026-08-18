@@ -17,6 +17,9 @@ remote application container.
   and remote docker-compose directory are derived from `git remote get-url origin`.
 - Passwordless SSH access to the target host is required, since every command
   makes at least one SSH/Docker-over-SSH round trip.
+- `.docker/inventory.yaml` must exist, declaring at least `app_name` and one
+  host — see [Setup](#setup) below. No other local `yq` install needed;
+  reading it runs a pinned Docker image instead (see Setup).
 
 ## Installation
 
@@ -61,35 +64,96 @@ directly — the script is self-contained and location-independent.
 
 ## Setup
 
-In the root of your project, create `.docker/ddep.json` with at least an
-`app` and `hosts`:
+In the root of your project, create `.docker/inventory.yaml` — a plain
+Ansible inventory (the same file the ["docker-compose-deploy" GitLab CI
+template](https://git.xintern.de/typo3/intern/devops/docker-compose-deploy)
+requires, if your project uses it):
 
-   ```json
-   {
-     "app": "symfony",
-     "hosts": {
-       "dev": "user@dev-host",
-       "test": "user@test-host",
-       "live": "user@live-host"
-     }
-   }
-   ```
+```yaml
+all:
+  vars:
+    app_name: symfony   # required - "typo3" or "symfony"
+  children:
+    dev:
+      hosts:
+        shared:
+          ansible_host: dev-host
+          ansible_user: user
+    test:
+      hosts:
+        test:
+          ansible_host: test-host
+          ansible_user: user
+    live:
+      hosts:
+        live:
+          ansible_host: live-host
+          ansible_user: user
+```
 
-`app` must be `typo3` or `symfony` — these are the two application types with
-built-in defaults (DB env var names, migration command, rsync
-directories/excludes). `hosts` maps a `--host` slug to an SSH target; see
-[examples/typo3/ddep.json](examples/typo3/ddep.json) and
-[examples/symfony/ddep.json](examples/symfony/ddep.json) for full examples.
+`app_name` must be `typo3` or `symfony` — these are the two application types
+with built-in defaults (DB env var names, migration command, rsync
+directories/excludes). `ddep` derives its own connection info from this file:
+
+- `app` ← `all.vars.app_name`
+- every host is addressable by its own inventory key as `--host <key>` —
+  e.g. `--host customer_a` for one of several hosts under a `live` group
+  (`all.children.live.hosts.customer_a`, `.customer_b`, ...)
+- `--host dev`/`test`/`live` also work as a convenience default, resolving to
+  the **first** host declared under that group, in file order. Reliable only
+  for a genuinely single-host group — once a group has more than one host,
+  address the one you mean by its own key instead (see above); which host
+  `--host live` happens to mean on a multi-host group is an implementation
+  detail (file order), not something to rely on.
+
+This is the **only** place `app`/host connection info come from — `ddep.json`
+(below) can no longer set or override either, even as a fallback. This is
+deliberate: exactly one file owns "which app template" and "how do I connect
+to this host," so the two can never silently disagree.
+
+No new local dependency to read it: `ddep` runs a pinned
+[`mikefarah/yq`](https://github.com/mikefarah/yq) Docker image (not a
+host-installed `yq`), since `docker` is already required above. This matters
+because "yq" is not one tool across platforms — e.g. Debian/Ubuntu's `apt
+install yq` installs an unrelated Python package
+([kislyuk/yq](https://github.com/kislyuk/yq)) with different syntax and
+flags. Using a pinned container image sidesteps that entirely: the exact same
+binary runs on every machine that already has Docker, regardless of OS or
+package manager.
+
+### `.docker/ddep.json` (optional)
+
+Everything **except** `app`/hosts — per-application setting overrides,
+`compose_projects_root`, `mariadb_version` — can optionally be set in
+`.docker/ddep.json`:
+
+```json
+{
+  "mariadb_version": "11.4",
+  "settings": {
+    "symfony": {
+      "db": {
+        "exclude_tables": ["^sessions$", "^v_media_references_info$"]
+      }
+    }
+  }
+}
+```
+
+See [examples/typo3/](examples/typo3/) and [examples/symfony/](examples/symfony/)
+for full examples of both files together, including a multi-host `live` group
+in the symfony example. A project that needs no per-application overrides at
+all doesn't need a `ddep.json` file — `.docker/inventory.yaml` alone is
+enough for `ddep` to run (see [examples/typo3/ddep.json](examples/typo3/ddep.json),
+deliberately empty).
 
 ### Config options
 
-| Key                  | Required | Description |
-|-----------------------|:--------:|--------------|
-| `app`                 | yes | `typo3` or `symfony` |
-| `hosts`               | yes | Map of host slug → SSH target (`user@host`), at least one entry |
-| `environments_path`   | no  | Remote docker-compose base directory. Default: `/opt/docker/compose` |
-| `mariadb_version`     | no  | MariaDB image tag used for dump/restore. Default: `lts` |
-| `settings.<app>.*`   | no  | Overrides any built-in setting for that application — see below |
+| Key                       | Required | Description |
+|---------------------------|:--------:|--------------|
+| `compose_projects_root`   | no  | Remote docker-compose base directory. Read from `.docker/inventory.yaml`'s `all.vars.compose_projects_root` if it deviates from the default; `.docker/ddep.json` may also set it directly. Default: `/opt/docker/compose` |
+| `mariadb_version`         | no  | MariaDB image tag used for dump/restore. Default: `lts` |
+| `settings.<app>.*`        | no  | Overrides any built-in setting for that application — see below |
 
 Everything is deep-merged over the script's built-in defaults, so you only
 need to specify what differs from the defaults for your `app`.
@@ -151,7 +215,7 @@ had it before.
 | `db:pull` | Export the remote database to stdout, gzip-compressed |
 | `ssh [command]` | Open a shell, or execute a command, inside the remote container |
 | `logs` | Follow the remote application container's log output |
-| `config` | Print the resolved configuration (`.docker/ddep.json` deep-merged over the built-in defaults) as JSON |
+| `config` | Print the resolved configuration (built-in defaults, `.docker/inventory.yaml`, and `.docker/ddep.json`, all deep-merged together) as JSON |
 | `info` | Print details about the remote application container as JSON (currently just `container_id`; more may be added) |
 
 `db:push` and `media:push` overwrite data in the remote environment and ask for
@@ -174,7 +238,7 @@ Options may appear before or after the command, in any order.
 |--------|--------------|
 | `--debug` | Enable bash execution tracing |
 | `--force` | Skip the confirmation prompt for destructive operations (`db:push`, `media:push`). Required for non-interactive/CI use |
-| `--host <host>` | Target host from `.docker/ddep.json`. Default: `dev` |
+| `--host <host>` | Target host, from `.docker/inventory.yaml` or `.docker/ddep.json`. Default: `dev` |
 | `--env <environment>` | Remote environment slug — the part of the remote docker-compose project directory name after `<project>_`. Default: interactively pick from the environments currently deployed on `--host` |
 | `-h`, `--help` | Show usage and exit |
 | `-V`, `--version` | Show version and exit |
@@ -265,6 +329,6 @@ ddep --host test --env staging --force db:push < dump.sql.gz
 | `required command(s) not found on PATH: …` | Install the missing tool(s) (`jq`, `docker`, `rsync`, `ssh`, `gzip`, `git`). |
 | `docker: command not found` when run via `ddev exec` | The ddev web container has no docker client. Run ddep on the **host** (where docker, ssh, and your agent live), not inside the container. |
 | `could not determine the project name` | Run ddep from inside the project's git working copy; it needs an `origin` remote. |
-| `host '…' is not configured` | The `--host` slug is missing from `hosts` in `.docker/ddep.json`. |
-| `No container found for project '…' and environment '…'` | Wrong `--env`, the stack isn't running, or `environments_path`/compose labels don't match. |
+| `host '…' is not configured` | The `--host` slug/key isn't declared anywhere under `all.children.*.hosts` in `.docker/inventory.yaml` (ddep.json's own `hosts`, if it has one, is ignored - see Setup). Run `ddep config \| jq .hosts` to see every currently resolvable value. |
+| `No container found for project '…' and environment '…'` | Wrong `--env`, the stack isn't running, or `compose_projects_root`/compose labels don't match. |
 | `no --env given and no terminal available` | Non-interactive run (CI/pipe) with no `--env`; pass it explicitly. |

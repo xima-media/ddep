@@ -1,8 +1,4 @@
 {
-	"app": "symfony",
-	"hosts": {
-		"dev": "user@dev-host"
-	},
 	"mariadb_version": "11.4",
 	"settings": {
 		"symfony": {

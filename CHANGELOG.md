@@ -7,8 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `app` and host connection info now come exclusively from
+  `.docker/inventory.yaml` (the Ansible inventory the "docker-compose-deploy"
+  GitLab CI template already requires) - `.docker/ddep.json`'s own `app`/
+  `hosts` keys are no longer read at all, not even as a fallback (a warning
+  is printed if a project's `ddep.json` still sets them, and both are
+  ignored). `.docker/inventory.yaml` is now required; `ddep.json` becomes
+  fully optional, scoped only to per-application setting overrides
+  (`settings.<app>.*`, `compose_projects_root`, `mariadb_version`). Migration:
+  move `app`/`hosts` out of `ddep.json` into `.docker/inventory.yaml`'s
+  `all.vars.app_name` and `all.children.<dev|test|live>.hosts.<key>.
+  ansible_user`/`ansible_host` - see the README's Setup section for the full
+  format.
+- Every individual host in a multi-host group (e.g. several SaaS customers
+  under `live`) is now addressable by its own inventory key (`--host
+  customer_a`), not just collapsed into one entry per `dev`/`test`/`live`
+  slug - `ddep.json`'s old schema had no way to express more than one host
+  per slug at all.
+- `compose_projects_root` (`ddep.json`'s former `environments_path` - renamed
+  for consistency with docker-compose-deploy's own field name for the same
+  directory) is read from `.docker/inventory.yaml`'s `all.vars.
+  compose_projects_root` when a project deviates from the shared default,
+  ahead of `ddep.json`'s own value.
+
 ### Added
 
+- Reads `.docker/inventory.yaml` via a pinned `mikefarah/yq` Docker image
+  rather than requiring a host-installed `yq` binary - avoids depending on a
+  tool name ("yq") that resolves to two different, incompatible programs
+  depending on the platform's package manager (Debian/Ubuntu's `apt install
+  yq` is an unrelated tool from macOS Homebrew's).
 - Distribution as a composer package (`xima-media/ddep`), exposing `vendor/bin/ddep`.
 - `logs` command to follow the remote application container's log output.
 - `-h`/`--help` and `-V`/`--version` flags.

@@ -3,6 +3,8 @@
 # Black-box tests drive the CLI; white-box tests source the script (the sourcing
 # guard stops it before the CLI runs) and exercise individual functions.
 
+bats_require_minimum_version 1.5.0
+
 setup() {
     export DDEP="${BATS_TEST_DIRNAME}/../bin/ddep"
     export FIXTURES="${BATS_TEST_DIRNAME}/fixtures"
@@ -55,22 +57,28 @@ setup() {
 @test "config prints the resolved config as JSON, outside a git repo" {
     mkdir -p "$BATS_TEST_TMPDIR/.docker"
     cp "$FIXTURES/local.json" "$BATS_TEST_TMPDIR/.docker/ddep.json"
+    cp "$FIXTURES/inventory.yaml" "$BATS_TEST_TMPDIR/.docker/inventory.yaml"
     run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" config'
     [ "$status" -eq 0 ]
     run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" config | jq -r "
+        .app,
         .mariadb_version,
         (.settings.symfony.db.exclude_tables | length),
         (.settings.typo3 | type)
     "'
     [ "$status" -eq 0 ]
-    [ "${lines[0]}" = "11.4" ]  # local override applied
-    [ "${lines[1]}" = "2" ]     # array replaced, not appended
-    [ "${lines[2]}" = "object" ] # unrelated app (typo3) preserved from defaults
+    [ "${lines[0]}" = "symfony" ] # from inventory.yaml - ddep.json no longer sets app/hosts
+    [ "${lines[1]}" = "11.4" ]    # ddep.json's own override applied
+    [ "${lines[2]}" = "2" ]       # array replaced, not appended
+    [ "${lines[3]}" = "object" ]  # unrelated app (typo3) preserved from defaults
 }
 
-@test "config exits 1 without .docker/ddep.json, like other commands" {
+@test "config exits 1 without .docker/inventory.yaml, even with .docker/ddep.json present" {
+    mkdir -p "$BATS_TEST_TMPDIR/.docker"
+    cp "$FIXTURES/local.json" "$BATS_TEST_TMPDIR/.docker/ddep.json"
     run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" config'
     [ "$status" -eq 1 ]
+    [[ "$output" == *"inventory.yaml"* ]]
     [[ "$output" == *"missing"* ]]
 }
 
@@ -110,7 +118,7 @@ _run_get_container_id() {
     # `set -e` does not abort on the intended non-zero returns.
     PATH="$stub:$PATH" DOCKER_PS_OUTPUT="$1" run bash -c '
         source "$DDEP"
-        ENVIRONMENTS_PATH=/opt; git_project_name=proj; target_env=staging; APP_NAME=app
+        COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=staging; APP_NAME=app
         cid=""
         rc=0
         get_container_id cid || rc=$?
@@ -141,11 +149,12 @@ _run_get_container_id() {
 @test "load_config deep-merges local config over the built-in defaults" {
     run bash -c '
         source "$DDEP"
+        INVENTORY_FILE="$FIXTURES/inventory.yaml"
         LOCAL_CONFIG_FILE="$FIXTURES/local.json"
         load_config
         jq -r "
             .mariadb_version,
-            .environments_path,
+            .compose_projects_root,
             (.settings.symfony.db.exclude_tables | length),
             .settings.symfony.db.exclude_tables[0],
             (.settings.symfony.db.migration | length > 0),
@@ -159,4 +168,92 @@ _run_get_container_id() {
     [ "${lines[3]}" = "^only_this$" ]          # replaced with local content
     [ "${lines[4]}" = "true" ]                 # sibling default (migration) preserved
     [ "${lines[5]}" = "object" ]               # unrelated app (typo3) preserved
+}
+
+# --- .docker/inventory.yaml integration
+
+@test "load_inventory_config derives app and per-host addressing from inventory.yaml" {
+    run bash -c '
+        source "$DDEP"
+        INVENTORY_FILE="$FIXTURES/inventory.yaml"
+        load_inventory_config
+    '
+    [ "$status" -eq 0 ]
+    run bash -c "echo '$output' | jq -r '
+        .app,
+        .hosts.dev,
+        .hosts.test,
+        .hosts.customer_a,
+        .hosts.customer_b,
+        .hosts.live
+    '"
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "symfony" ]                        # all.vars.app_name
+    [ "${lines[1]}" = "dev-user@dev-host" ]               # dev's one host (key "shared") - tier default
+    [ "${lines[2]}" = "test-user@test-host" ]             # test's one host (key "test") - tier default
+    [ "${lines[3]}" = "customer-a-user@customer-a-host" ] # addressable by its own key, not just via "live"
+    [ "${lines[4]}" = "customer-b-user@customer-b-host" ] # ditto - never collapsed into one "live" entry
+    [ "${lines[5]}" = "customer-a-user@customer-a-host" ] # tier default = FIRST host in file order (customer_a)
+}
+
+@test "load_inventory_config returns {} when inventory.yaml doesn't exist" {
+    run bash -c '
+        source "$DDEP"
+        INVENTORY_FILE="$BATS_TEST_TMPDIR/.docker/inventory.yaml"
+        load_inventory_config
+    '
+    [ "$status" -eq 0 ]
+    [ "$output" = "{}" ]
+}
+
+@test "load_config uses inventory.yaml's app/hosts when .docker/ddep.json is absent" {
+    run bash -c '
+        source "$DDEP"
+        INVENTORY_FILE="$FIXTURES/inventory.yaml"
+        LOCAL_CONFIG_FILE="$BATS_TEST_TMPDIR/.docker/ddep.json"
+        load_config
+        jq -r ".app, .hosts.customer_b, .mariadb_version" "$CONFIG_FILE"
+    '
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "symfony" ]     # from inventory.yaml, no ddep.json needed at all
+    [ "${lines[1]}" = "customer-b-user@customer-b-host" ]
+    [ "${lines[2]}" = "lts" ]         # built-in default, untouched by either file
+}
+
+@test "load_config: compose_projects_root comes from inventory.yaml only when it deviates from the default" {
+    run bash -c '
+        source "$DDEP"
+        INVENTORY_FILE="$FIXTURES/inventory.yaml"
+        LOCAL_CONFIG_FILE="$BATS_TEST_TMPDIR/.docker/ddep.json"
+        load_config
+        jq -r ".compose_projects_root" "$CONFIG_FILE"
+    '
+    [ "$status" -eq 0 ]
+    [ "$output" = "/opt/docker/compose" ] # inventory.yaml never sets it - built-in default applies
+
+    run bash -c '
+        source "$DDEP"
+        INVENTORY_FILE="$FIXTURES/inventory_custom_root.yaml"
+        LOCAL_CONFIG_FILE="$BATS_TEST_TMPDIR/.docker/ddep.json"
+        load_config
+        jq -r ".compose_projects_root" "$CONFIG_FILE"
+    '
+    [ "$status" -eq 0 ]
+    [ "$output" = "/srv/apps" ] # inventory.yaml deviates from the default - its value wins
+}
+
+@test "load_config: ddep.json is not allowed to override app/hosts - inventory.yaml's win, with a warning" {
+    run --separate-stderr bash -c '
+        source "$DDEP"
+        INVENTORY_FILE="$FIXTURES/inventory.yaml"
+        LOCAL_CONFIG_FILE="$FIXTURES/local_with_legacy_hosts.json"
+        load_config
+        jq -r ".app, .hosts.dev, .hosts.customer_a, .mariadb_version" "$CONFIG_FILE"
+    '
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "symfony" ]
+    [ "${lines[1]}" = "dev-user@dev-host" ]                # inventory's value, NOT local_with_legacy_hosts.json's "user@dev-host"
+    [ "${lines[2]}" = "customer-a-user@customer-a-host" ]  # inventory's own multi-host entry, untouched
+    [ "${lines[3]}" = "11.4" ]                             # non-app/hosts overrides from ddep.json still apply
+    [[ "$stderr" == *"ignored"* ]]                         # warns that ddep.json's app/hosts were ignored
 }

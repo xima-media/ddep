@@ -1,0 +1,19 @@
+all:
+  vars:
+    app_name: typo3
+  children:
+    dev:
+      hosts:
+        shared:
+          ansible_host: dev-host
+          ansible_user: user
+    test:
+      hosts:
+        test:
+          ansible_host: test-host
+          ansible_user: user
+    live:
+      hosts:
+        live:
+          ansible_host: live-host
+          ansible_user: user
