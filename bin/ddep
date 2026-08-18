@@ -52,7 +52,9 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # Usage:
 #   ddep [options] <command>
 #
-#   Options may appear before or after the command, in any order.
+#   Options must come before the command, in any order among themselves. For
+#   "ssh", everything after the command is the container command instead - see
+#   below. Every other command takes no further arguments.
 #
 # Commands:
 #   media:push              Push local media files to the remote application container
@@ -99,10 +101,10 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # Examples:
 #
 #   # Pull media from the test environment
-#   ddep --host test media:pull --env development
+#   ddep --host test --env development media:pull
 #
 #   # Push local media to the dev environment
-#   ddep --host dev media:push --env feature_xyz
+#   ddep --host dev --env feature_xyz media:push
 #
 #   # Open an interactive shell in the dev application container
 #   ddep --host dev ssh
@@ -114,13 +116,13 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #   ddep --host dev logs
 #
 #   # Import a database dump into the dev environment (plain SQL or gzip, both work)
-#   ddep --host dev db:push --env feature_xyz < dump.sql.gz
+#   ddep --host dev --env feature_xyz db:push < dump.sql.gz
 #
 #   # Export the dev database to a dump file (already gzip-compressed)
-#   ddep --host dev db:pull --env feature_xyz > dump.sql.gz
+#   ddep --host dev --env feature_xyz db:pull > dump.sql.gz
 #
 #   # Pipe an existing dump directly into the remote database
-#   cat dump.sql.gz | ddep --host dev db:push --env feature_xyz
+#   cat dump.sql.gz | ddep --host dev --env feature_xyz db:push
 #
 #   # Export a remote TYPO3 database (plain SQL) and import it locally
 #   ssh dev@vm "cd /var/www/html/typo3/current && vendor/bin/typo3 database:export" \
@@ -699,7 +701,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-while [[ $# -gt 0 ]]; do
+# Flags always precede the command - the loop stops as soon as one is matched
+# (condition below, not a per-case check), so a flag typo'd or placed after the
+# command is never silently absorbed as part of it. For "ssh" specifically,
+# everything left after the command is the container command, verbatim (as
+# with "ssh host <cmd>") - quote one containing spaces as a single string. For
+# every other command, anything left over is a real error (see below) - none
+# of them take positional args.
+while [[ $# -gt 0 && -z "${command}" ]]; do
     case "$1" in
         -h|--help)
             usage
@@ -733,20 +742,9 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
-        media:push|media:pull|db:push|db:pull|logs|config|info)
+        media:push|media:pull|db:push|db:pull|logs|config|info|ssh)
             command="$1"
             shift
-            ;;
-        ssh)
-            command="$1"
-            shift
-            # Everything after "ssh" is the command to run in the container. As with
-            # "ssh host <cmd>", the arguments are joined with spaces and executed by
-            # the container shell, so quote a command containing spaces as one string.
-            if [[ $# -gt 0 ]]; then
-                ssh_args+=("$@")
-                shift $#
-            fi
             ;;
         *)
             echo "Unknown argument: $1" >&2
@@ -756,6 +754,13 @@ while [[ $# -gt 0 ]]; do
 done
 if [ -z "${command}" ]; then
     echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull, logs, config, info" >&2
+    exit 1
+fi
+
+if [[ "${command}" == "ssh" ]]; then
+    ssh_args=("$@")
+elif [[ $# -gt 0 ]]; then
+    echo "Error: unexpected argument(s) after '${command}': $* - flags must come before the command." >&2
     exit 1
 fi
 

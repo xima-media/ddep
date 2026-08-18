@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Breaking:** flags must now come before the command (e.g. `ddep --host dev
+  --env x db:push`, not `ddep db:push --env x`) - previously `ssh` silently
+  swallowed any flags placed after it into the remote command instead of
+  parsing them (`ddep ssh --env x` ran `--env x` inside the container rather
+  than setting the environment, found via real use), and other commands
+  quietly accepted trailing flags in a way the docs never actually promised
+  consistently. Flags-first removes the ambiguity entirely instead of just
+  patching around it for `ssh`, and matches how docker-compose-deploy's own
+  `ci/reset.yml` already invokes `ddep` everywhere.
+
 ### Changed
 
 - **Breaking:** `app` and host connection info now come exclusively from

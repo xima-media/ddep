@@ -54,6 +54,24 @@ setup() {
     [[ "$output" == *"--env requires a value"* ]]
 }
 
+@test "a flag after the command is rejected, not silently absorbed" {
+    run "$DDEP" logs --env dwis-3442
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"flags must come before the command"* ]]
+}
+
+@test "flags before ssh parse as options, not as part of the container command" {
+    # No git repo in BATS_TEST_TMPDIR - if --host/--env parsed correctly, arg
+    # parsing succeeds and it fails later, for an unrelated reason (no git
+    # repo). If they'd been swallowed into ssh_args instead (the bug), it
+    # would fail identically - so this only distinguishes a REGRESSION back
+    # to "flags must come before the command" ever firing here, which it must not.
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" --host dev --env dwis-3442 ssh true'
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"flags must come before the command"* ]]
+    [[ "$output" == *"could not determine the project name"* ]]
+}
+
 @test "config prints the resolved config as JSON, outside a git repo" {
     mkdir -p "$BATS_TEST_TMPDIR/.docker"
     cp "$FIXTURES/local.json" "$BATS_TEST_TMPDIR/.docker/ddep.json"

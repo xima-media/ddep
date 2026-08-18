@@ -236,13 +236,15 @@ stdin (detected automatically) for backward compatibility.
 
 ## Options
 
-Options may appear before or after the command, in any order.
+Options must come before the command, in any order among themselves. For `ssh`,
+everything after the command is the container command instead of an option -
+see [Commands](#commands) above. Every other command takes no further arguments.
 
 | Option | Description |
 |--------|--------------|
 | `--debug` | Enable bash execution tracing |
 | `--force` | Skip the confirmation prompt for destructive operations (`db:push`, `media:push`). Required for non-interactive/CI use |
-| `--host <host>` | Target host, from `.docker/inventory.yaml` or `.docker/ddep.json`. Default: `dev` |
+| `--host <host>` | Target host, from `.docker/inventory.yaml`. Default: `dev` |
 | `--env <environment>` | Remote environment slug — the part of the remote docker-compose project directory name after `<project>_`. Default: interactively pick from the environments currently deployed on `--host` |
 | `-h`, `--help` | Show usage and exit |
 | `-V`, `--version` | Show version and exit |
@@ -251,10 +253,10 @@ Options may appear before or after the command, in any order.
 
 ```sh
 # Pull media from the test environment
-ddep --host test media:pull --env development
+ddep --host test --env development media:pull
 
 # Push local media to the dev environment
-ddep --host dev media:push --env feature_xyz
+ddep --host dev --env feature_xyz media:push
 
 # Open an interactive shell in the dev application container
 ddep --host dev ssh
@@ -266,13 +268,13 @@ ddep --host dev ssh "vendor/bin/typo3 list"
 ddep --host dev logs
 
 # Import a database dump into the dev environment (plain SQL or gzip, both work)
-ddep --host dev db:push --env feature_xyz < dump.sql.gz
+ddep --host dev --env feature_xyz db:push < dump.sql.gz
 
 # Export the dev database to a dump file (already gzip-compressed)
-ddep --host dev db:pull --env feature_xyz > dump.sql.gz
+ddep --host dev --env feature_xyz db:pull > dump.sql.gz
 
 # Pipe an existing dump directly into the remote database
-cat dump.sql.gz | ddep --host dev db:push --env feature_xyz
+cat dump.sql.gz | ddep --host dev --env feature_xyz db:push
 
 # Inspect the fully resolved configuration (no git repo, host or env needed)
 ddep config
