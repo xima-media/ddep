@@ -1,0 +1,22 @@
+all:
+  vars:
+    app_name: symfony
+  children:
+    dev:
+      hosts:
+        dev:
+          ansible_host: dev-host
+          ansible_user: user
+    test:
+      hosts:
+        test:
+          ansible_host: test-host
+          ansible_user: user
+    live:
+      hosts:
+        customer_a:
+          ansible_host: customer-a-host
+          ansible_user: user
+        customer_b:
+          ansible_host: customer-b-host
+          ansible_user: user

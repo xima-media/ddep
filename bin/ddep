@@ -11,32 +11,35 @@ DDEP_VERSION="1.0.0"
 CONFIG_FILE=""
 
 LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
-# .docker/ddep.json (deep-merged over the script's built-in defaults; any key,
-# including nested application settings, fully replaces its default when set
-# locally rather than appending to it):
+INVENTORY_FILE="$(pwd)/.docker/inventory.yaml"
+# Pinned by tag+digest, matching this org's convention elsewhere
+# (docker-compose-deploy). See run_yq for why this isn't just "require yq on PATH".
+YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025"
+# "app", "hosts", and "compose_projects_root" always come from .docker/inventory.yaml
+# (required), never from .docker/ddep.json, even as a fallback - see
+# load_inventory_config/load_config.
+#   app <- all.vars.app_name
+#   hosts.<host_key> <- "<ansible_user>@<ansible_host>" for every host, keyed by its
+#     own inventory key (e.g. --host customer_a for one of several hosts under a
+#     "live" group), plus hosts.<dev|test|live> as a convenience default resolving
+#     to the FIRST host declared under that group (file order) - not reliable for
+#     targeting one specific host once a group has more than one.
+# See .docker/inventory.yaml's format (an Ansible inventory) in
+# docker-compose-deploy's README ("Multi-host test/live").
+#
+# .docker/ddep.json is optional, scoped only to per-application setting overrides:
 # {
-#   "app": "symfony",                       # required, must match a key under "settings" below
-#
-#   "hosts": {                              # required, at least one entry
-#     "dev": "user@dev-host",
-#     "test": "user@test-host",
-#     "live": "user@live-host"
-#   },
-#
-#   "environments_path": "/opt/docker/compose",  # optional, overrides the built-in default
-#   "mariadb_version": "lts",                    # optional, overrides the built-in default
-#
-#   "settings": {                            # optional, overrides built-in per-application settings
+#   "mariadb_version": "lts",                        # optional, overrides the built-in default
+#   "settings": {                                     # optional, per-application overrides
 #     "symfony": {
 #       "db": {
-#         "exclude_tables": [               # replaces the application's built-in exclude list
-#           "^sessions$",
-#           "^v_media_references_info$"
-#         ]
+#         "exclude_tables": ["^sessions$", "^v_media_references_info$"]
 #       }
 #     }
 #   }
 # }
+# A ddep.json still setting "app"/"hosts" (the pre-inventory.yaml schema) has both
+# ignored, with a warning - see load_config.
 
 # Requirements (local machine):
 #   jq, docker, ssh, rsync, gzip
@@ -44,11 +47,14 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   remote docker-compose directories are derived from `git remote get-url origin`).
 #   Passwordless SSH access to the target host is required, since every command
 #   makes at least one SSH/Docker-over-SSH round trip.
+#   .docker/inventory.yaml must exist, declaring at least "app" and one host.
 #
 # Usage:
 #   ddep [options] <command>
 #
-#   Options may appear before or after the command, in any order.
+#   Options must come before the command, in any order among themselves. For
+#   "ssh", everything after the command is the container command instead - see
+#   below. Every other command takes no further arguments.
 #
 # Commands:
 #   media:push              Push local media files to the remote application container
@@ -64,8 +70,9 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #                           had them before.
 #   ssh [command]           Open a shell or execute a command inside the remote container
 #   logs                    Follow the remote application container's log output
-#   config                  Print the resolved configuration (.docker/ddep.json
-#                           deep-merged over the built-in defaults) as JSON
+#   config                  Print the resolved configuration (built-in defaults,
+#                           .docker/inventory.yaml, and .docker/ddep.json, all
+#                           deep-merged together) as JSON
 #   info                    Print details about the remote application container as
 #                           JSON (currently just container_id; more may be added)
 #
@@ -76,7 +83,7 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   --force                 Skip the confirmation prompt for destructive
 #                           operations (db:push, media:push). Required for
 #                           non-interactive/CI use.
-#   --host <host>           Target host from .docker/ddep.json
+#   --host <host>           Target host, from .docker/inventory.yaml
 #                           Default: dev
 #
 #   --env <environment>     Target remote environment slug. This is the part of the
@@ -87,17 +94,18 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #                           currently deployed on --host
 #
 # Configuration:
-#   Default configuration (environments_path, mariadb_version, and the per-application
-#   db/rsync settings) is built into the script. Project-specific configuration is
-#   loaded from .docker/ddep.json and deep-merged on top — see the schema above.
+#   Built-in defaults, deep-merged with .docker/inventory.yaml (required - "app"/"hosts",
+#   plus compose_projects_root if it deviates from the default), then .docker/ddep.json
+#   (optional, everything else - app/hosts/compose_projects_root there are ignored, with
+#   a warning) - see the schema above.
 #
 # Examples:
 #
 #   # Pull media from the test environment
-#   ddep --host test media:pull --env development
+#   ddep --host test --env development media:pull
 #
 #   # Push local media to the dev environment
-#   ddep --host dev media:push --env feature_xyz
+#   ddep --host dev --env feature_xyz media:push
 #
 #   # Open an interactive shell in the dev application container
 #   ddep --host dev ssh
@@ -109,13 +117,13 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 #   ddep --host dev logs
 #
 #   # Import a database dump into the dev environment (plain SQL or gzip, both work)
-#   ddep --host dev db:push --env feature_xyz < dump.sql.gz
+#   ddep --host dev --env feature_xyz db:push < dump.sql.gz
 #
 #   # Export the dev database to a dump file (already gzip-compressed)
-#   ddep --host dev db:pull --env feature_xyz > dump.sql.gz
+#   ddep --host dev --env feature_xyz db:pull > dump.sql.gz
 #
 #   # Pipe an existing dump directly into the remote database
-#   cat dump.sql.gz | ddep --host dev db:push --env feature_xyz
+#   cat dump.sql.gz | ddep --host dev --env feature_xyz db:push
 #
 #   # Export a remote TYPO3 database (plain SQL) and import it locally
 #   ssh dev@vm "cd /var/www/html/typo3/current && vendor/bin/typo3 database:export" \
@@ -145,7 +153,7 @@ Commands:
   info         Print details about the remote application container as JSON
 
 Options:
-  --host <host>   Target host from .docker/ddep.json (default: dev)
+  --host <host>   Target host from .docker/inventory.yaml (default: dev)
   --env <env>     Target environment slug (default: interactive pick)
   --force         Skip confirmation for destructive ops (db:push, media:push)
   --debug         Enable bash execution tracing
@@ -175,7 +183,7 @@ check_requirements() {
 load_default_config() {
     cat <<'JSON'
 {
-  "environments_path": "/opt/docker/compose",
+  "compose_projects_root": "/opt/docker/compose",
   "mariadb_version": "lts",
   "settings": {
     "typo3": {
@@ -297,19 +305,109 @@ load_default_config() {
 JSON
 }
 
+# Evaluates a yq expression against INVENTORY_FILE's content - preferring a
+# host-installed mikefarah/yq (verified via --version, not just "on PATH" -
+# "yq" is not one tool, see YQ_IMAGE) if there is one, else a pinned throwaway
+# container. Needed because docker-compose-deploy's ci/reset.yml runs ddep
+# from a plain docker:*-cli image with no local daemon - its `docker` CLI
+# only ever reaches the remote deploy host over SSH, so that job's setup
+# installs a real yq binary instead, which this then prefers. A developer's
+# machine already has docker (required below for the remote host itself) and
+# can run the container fallback directly.
+#
+# Piped in over stdin ("-") rather than a bind mount for the container path -
+# avoids host/container path translation issues on Docker Desktop for Mac.
+#
+# -o=json -r: needed together - "-o=json" alone still wraps a map result in
+# YAML syntax, "-r" alone still emits YAML for a map result; combined, they
+# give plain JSON for maps and an unquoted raw string for scalars.
+#
+# DOCKER_HOST='' overrides whatever the caller's environment has it set to -
+# ci/reset.yml exports DOCKER_HOST="ssh://<remote deploy host>" before most
+# ddep invocations, which would otherwise make an unprefixed `docker run`
+# here try to run on the remote host instead of locally.
+run_yq() {
+    if command -v yq >/dev/null 2>&1 && yq --version 2>&1 | grep -q mikefarah; then
+        yq eval -o=json -r "$1" - < "${INVENTORY_FILE}"
+        return
+    fi
+
+    DOCKER_HOST='' docker run --rm -i "${YQ_IMAGE}" eval -o=json -r "$1" - < "${INVENTORY_FILE}"
+}
+
+# Derives {"app": ..., "hosts": {...}} from .docker/inventory.yaml - the
+# exclusive source for both (see INVENTORY_FILE's comment); "{}" if the file
+# doesn't exist, though load_config never lets a real run get this far
+# without it. Uses run_yq for the YAML reads and jq to assemble the result,
+# rather than one large yq expression, since each is already relied on
+# elsewhere in this script.
+load_inventory_config() {
+    if [[ ! -f "${INVENTORY_FILE}" ]]; then
+        echo '{}'
+        return
+    fi
+
+    local app compose_projects_root
+    app="$(run_yq '.all.vars.app_name // ""')"
+    # Same directory ansible/deploy.yml's remote_project_dir is built from.
+    # Only read here if it deviates from the shared built-in default - an
+    # unset value falls through to load_default_config's own default.
+    compose_projects_root="$(run_yq '.all.vars.compose_projects_root // ""')"
+
+    local group group_hosts first_user first_addr hosts_json='{}'
+    for group in dev test live; do
+        # Every host in this group, addressable by its own inventory key.
+        group_hosts="$(run_yq ".all.children.${group}.hosts // {} | with_entries(.value = \"\(.value.ansible_user)@\(.value.ansible_host)\")")"
+        hosts_json="$(jq --argjson gh "${group_hosts}" '. + $gh' <<< "${hosts_json}")"
+
+        # Tier-level convenience default (--host dev/test/live) - the first host
+        # in file order. Not reliable for targeting one specific host once a
+        # group has more than one - address it by its own key instead (above).
+        first_user="$(run_yq ".all.children.${group}.hosts // {} | to_entries | .[0].value.ansible_user // \"\"")"
+        first_addr="$(run_yq ".all.children.${group}.hosts // {} | to_entries | .[0].value.ansible_host // \"\"")"
+        if [[ -n "${first_user}" && -n "${first_addr}" ]]; then
+            hosts_json="$(jq --arg group "${group}" --arg val "${first_user}@${first_addr}" '. + {($group): $val}' <<< "${hosts_json}")"
+        fi
+    done
+
+    jq -n --arg app "${app}" --arg compose_projects_root "${compose_projects_root}" --argjson hosts "${hosts_json}" '
+        (if $app != "" then {app: $app} else {} end)
+        + (if $compose_projects_root != "" then {compose_projects_root: $compose_projects_root} else {} end)
+        + (if ($hosts | length) > 0 then {hosts: $hosts} else {} end)
+    '
+}
+
 load_config() {
     local local_config="${LOCAL_CONFIG_FILE}"
+    local local_json="{}"
 
     CONFIG_FILE=$(mktemp)
 
-    if [[ ! -f "${local_config}" ]]; then
-        echo "Error: ${local_config} missing" >&2
+    if [[ ! -f "${INVENTORY_FILE}" ]]; then
+        echo "Error: ${INVENTORY_FILE} missing" >&2
         exit 1
+    fi
+
+    if [[ -f "${local_config}" ]]; then
+        local_json="$(cat "${local_config}")"
+
+        # Pre-inventory.yaml ddep.json schema - ignored now, never a fallback.
+        # compose_projects_root included: inventory.yaml's all.vars.
+        # compose_projects_root always wins when set, falling back to the
+        # built-in default when it isn't - never to a ddep.json value.
+        if jq -e '(.app != null) or (.hosts != null) or (.compose_projects_root != null)' <<< "${local_json}" >/dev/null; then
+            echo "Warning: ${local_config} sets \"app\"/\"hosts\"/\"compose_projects_root\" - all" >&2
+            echo "         ignored. These come exclusively from ${INVENTORY_FILE} now" >&2
+            echo "         (compose_projects_root falls back to the built-in default, never to" >&2
+            echo "         a ${local_config} value) - remove them from ${local_config}." >&2
+            local_json="$(jq 'del(.app, .hosts, .compose_projects_root)' <<< "${local_json}")"
+        fi
     fi
 
     jq -n \
         --slurpfile default <(load_default_config) \
-        --slurpfile local "${local_config}" \
+        --argjson inventory "$(load_inventory_config)" \
+        --argjson local "${local_json}" \
         '
         def deepmerge(a;b):
             reduce (b | keys[]) as $key (
@@ -323,7 +421,7 @@ load_config() {
                 end
             );
 
-        deepmerge($default[0]; $local[0])
+        deepmerge(deepmerge($default[0]; $inventory); $local)
         ' > "${CONFIG_FILE}"
 }
 
@@ -354,11 +452,11 @@ parse_config_json() {
         exit 1
     fi
 
-    ENVIRONMENTS_PATH=$(jq -r '.environments_path' "${CONFIG_FILE}")
-    ENVIRONMENTS_PATH="${ENVIRONMENTS_PATH%/}"
+    COMPOSE_PROJECTS_ROOT=$(jq -r '.compose_projects_root' "${CONFIG_FILE}")
+    COMPOSE_PROJECTS_ROOT="${COMPOSE_PROJECTS_ROOT%/}"
 
-    if [[ -z "${ENVIRONMENTS_PATH}" || "${ENVIRONMENTS_PATH}" == "null" ]]; then
-        echo "Error: environments_path is missing" >&2
+    if [[ -z "${COMPOSE_PROJECTS_ROOT}" || "${COMPOSE_PROJECTS_ROOT}" == "null" ]]; then
+        echo "Error: compose_projects_root is missing" >&2
         exit 1
     fi
 
@@ -418,7 +516,7 @@ get_mariadb_credentials() {
     local -n _mariadb_password=$4
     local -n _mariadb_port=$5
 
-    local environment_file_path="${ENVIRONMENTS_PATH}/${git_project_name}_${target_env}/.app.env.provision"
+    local environment_file_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}/.app.env.provision"
 
     if ! ssh "${REMOTE_DOCKER_HOST}" "test -f '${environment_file_path}'"; then
         echo "Error: ${environment_file_path} missing" >&2
@@ -481,7 +579,7 @@ get_container_id() {
     # message to stderr, so callers can tell the two failure modes apart instead
     # of reporting every failure as "not found".
     local -n _container_id=$1
-    local environment_path="${ENVIRONMENTS_PATH}/${git_project_name}_${target_env}"
+    local environment_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}"
     local ids
     ids=$(docker ps -q \
         --filter "label=com.docker.compose.project.working_dir=${environment_path}" \
@@ -608,7 +706,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-while [[ $# -gt 0 ]]; do
+# Flags always precede the command - the loop stops as soon as one is matched
+# (condition below, not a per-case check), so a flag typo'd or placed after the
+# command is never silently absorbed as part of it. For "ssh" specifically,
+# everything left after the command is the container command, verbatim (as
+# with "ssh host <cmd>") - quote one containing spaces as a single string. For
+# every other command, anything left over is a real error (see below) - none
+# of them take positional args.
+while [[ $# -gt 0 && -z "${command}" ]]; do
     case "$1" in
         -h|--help)
             usage
@@ -642,20 +747,9 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
-        media:push|media:pull|db:push|db:pull|logs|config|info)
+        media:push|media:pull|db:push|db:pull|logs|config|info|ssh)
             command="$1"
             shift
-            ;;
-        ssh)
-            command="$1"
-            shift
-            # Everything after "ssh" is the command to run in the container. As with
-            # "ssh host <cmd>", the arguments are joined with spaces and executed by
-            # the container shell, so quote a command containing spaces as one string.
-            if [[ $# -gt 0 ]]; then
-                ssh_args+=("$@")
-                shift $#
-            fi
             ;;
         *)
             echo "Unknown argument: $1" >&2
@@ -665,6 +759,13 @@ while [[ $# -gt 0 ]]; do
 done
 if [ -z "${command}" ]; then
     echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull, logs, config, info" >&2
+    exit 1
+fi
+
+if [[ "${command}" == "ssh" ]]; then
+    ssh_args=("$@")
+elif [[ $# -gt 0 ]]; then
+    echo "Error: unexpected argument(s) after '${command}': $* - flags must come before the command." >&2
     exit 1
 fi
 
@@ -679,9 +780,9 @@ if [ -z "${host}" ]; then
     host="dev"
 fi
 
-# config only inspects .docker/ddep.json merged with the built-in defaults; it
-# does not touch git, docker or any remote host, and intentionally skips
-# validate_config so a broken local config can still be inspected.
+# config only inspects .docker/inventory.yaml/.docker/ddep.json merged with the
+# built-in defaults; it does not touch git or any remote host. Intentionally
+# skips validate_config so a broken local config can still be inspected.
 if [ "${command}" = "config" ]; then
     load_config
     jq '.' "${CONFIG_FILE}"
