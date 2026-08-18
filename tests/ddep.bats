@@ -260,18 +260,19 @@ _run_get_container_id() {
     [ "$output" = "/srv/apps" ] # inventory.yaml deviates from the default - its value wins
 }
 
-@test "load_config: ddep.json is not allowed to override app/hosts - inventory.yaml's win, with a warning" {
+@test "load_config: ddep.json is not allowed to override app/hosts/compose_projects_root - inventory.yaml or the built-in default win, with a warning" {
     run --separate-stderr bash -c '
         source "$DDEP"
         INVENTORY_FILE="$FIXTURES/inventory.yaml"
         LOCAL_CONFIG_FILE="$FIXTURES/local_with_legacy_hosts.json"
         load_config
-        jq -r ".app, .hosts.dev, .hosts.customer_a, .mariadb_version" "$CONFIG_FILE"
+        jq -r ".app, .hosts.dev, .hosts.customer_a, .compose_projects_root, .mariadb_version" "$CONFIG_FILE"
     '
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = "symfony" ]
     [ "${lines[1]}" = "dev-user@dev-host" ]                # inventory's value, NOT local_with_legacy_hosts.json's "user@dev-host"
     [ "${lines[2]}" = "customer-a-user@customer-a-host" ]  # inventory's own multi-host entry, untouched
-    [ "${lines[3]}" = "11.4" ]                             # non-app/hosts overrides from ddep.json still apply
-    [[ "$stderr" == *"ignored"* ]]                         # warns that ddep.json's app/hosts were ignored
+    [ "${lines[3]}" = "/opt/docker/compose" ]              # built-in default - NOT local_with_legacy_hosts.json's "/legacy/path" (inventory.yaml doesn't set it either)
+    [ "${lines[4]}" = "11.4" ]                             # non-app/hosts/compose_projects_root overrides from ddep.json still apply
+    [[ "$stderr" == *"ignored"* ]]                         # warns that ddep.json's app/hosts/compose_projects_root were ignored
 }

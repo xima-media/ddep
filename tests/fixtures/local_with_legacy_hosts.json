@@ -3,5 +3,6 @@
 	"hosts": {
 		"dev": "user@dev-host"
 	},
+	"compose_projects_root": "/legacy/path",
 	"mariadb_version": "11.4"
 }

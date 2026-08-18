@@ -21,28 +21,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** `app` and host connection info now come exclusively from
-  `.docker/inventory.yaml` (the Ansible inventory the "docker-compose-deploy"
-  GitLab CI template already requires) - `.docker/ddep.json`'s own `app`/
-  `hosts` keys are no longer read at all, not even as a fallback (a warning
-  is printed if a project's `ddep.json` still sets them, and both are
-  ignored). `.docker/inventory.yaml` is now required; `ddep.json` becomes
-  fully optional, scoped only to per-application setting overrides
-  (`settings.<app>.*`, `compose_projects_root`, `mariadb_version`). Migration:
-  move `app`/`hosts` out of `ddep.json` into `.docker/inventory.yaml`'s
-  `all.vars.app_name` and `all.children.<dev|test|live>.hosts.<key>.
-  ansible_user`/`ansible_host` - see the README's Setup section for the full
-  format.
+- **Breaking:** `app`, host connection info, and `compose_projects_root`
+  (`ddep.json`'s former `environments_path` - renamed for consistency with
+  docker-compose-deploy's own field name for the same directory) now come
+  exclusively from `.docker/inventory.yaml` (the Ansible inventory the
+  "docker-compose-deploy" GitLab CI template already requires) - `.docker/
+  ddep.json`'s own `app`/`hosts`/`compose_projects_root` keys are no longer
+  read at all, not even as a fallback (a warning is printed if a project's
+  `ddep.json` still sets any of them, and all are ignored).
+  `compose_projects_root` specifically: `all.vars.compose_projects_root` wins
+  whenever it's set, falling back to the built-in default when it isn't -
+  never to a `ddep.json` value. `.docker/inventory.yaml` is now required;
+  `ddep.json` becomes fully optional, scoped only to per-application setting
+  overrides (`settings.<app>.*`, `mariadb_version`). Migration: move `app`/
+  `hosts`/`compose_projects_root` out of `ddep.json` into `.docker/
+  inventory.yaml`'s `all.vars.app_name`/`all.vars.compose_projects_root` and
+  `all.children.<dev|test|live>.hosts.<key>.ansible_user`/`ansible_host` -
+  see the README's Setup section for the full format.
 - Every individual host in a multi-host group (e.g. several SaaS customers
   under `live`) is now addressable by its own inventory key (`--host
   customer_a`), not just collapsed into one entry per `dev`/`test`/`live`
   slug - `ddep.json`'s old schema had no way to express more than one host
   per slug at all.
-- `compose_projects_root` (`ddep.json`'s former `environments_path` - renamed
-  for consistency with docker-compose-deploy's own field name for the same
-  directory) is read from `.docker/inventory.yaml`'s `all.vars.
-  compose_projects_root` when a project deviates from the shared default,
-  ahead of `ddep.json`'s own value.
 
 ### Added
 

@@ -106,29 +106,28 @@ directories/excludes). `ddep` derives its own connection info from this file:
   `--host live` happens to mean on a multi-host group is an implementation
   detail (file order), not something to rely on.
 
-This is the **only** place `app`/host connection info come from — `ddep.json`
-(below) can no longer set or override either, even as a fallback. This is
-deliberate: exactly one file owns "which app template" and "how do I connect
-to this host," so the two can never silently disagree.
+This is the **only** place `app`, host connection info, and
+`compose_projects_root` (the remote docker-compose base directory) come from —
+`ddep.json` (below) can no longer set or override any of them, even as a
+fallback. `all.vars.compose_projects_root` wins whenever it's set; when it
+isn't, `ddep` falls back to its own built-in default
+(`/opt/docker/compose`) — never to a `ddep.json` value. This is deliberate:
+exactly one file owns "which app template," "how do I connect to this host,"
+and "where do deployed environments live," so it can never silently disagree
+with itself.
 
 No new local dependency is required to read it: `ddep` prefers a verified
 host-installed [`mikefarah/yq`](https://github.com/mikefarah/yq) and otherwise
 runs the pinned Docker image. This matters because "yq" is not one tool across
 platforms — e.g. Debian/Ubuntu's `apt install yq` installs an unrelated Python
-package ([kislyuk/yq](https://github.com/kislyuk/yq)) with different syntax and
-flags. Verifying the local implementation and pinning the fallback image avoid
-accidentally invoking that incompatible tool.
-because "yq" is not one tool across platforms — e.g. Debian/Ubuntu's `apt
-install yq` installs an unrelated Python package
-([kislyuk/yq](https://github.com/kislyuk/yq)) with different syntax and
-flags. Using a pinned container image sidesteps that entirely: the exact same
-binary runs on every machine that already has Docker, regardless of OS or
-package manager.
+package ([kislyuk/yq](https://github.com/kislyuk/yq)) with different syntax
+and flags. Verifying the local implementation and pinning the fallback image
+avoid accidentally invoking that incompatible tool.
 
 ### `.docker/ddep.json` (optional)
 
-Everything **except** `app`/hosts — per-application setting overrides,
-`compose_projects_root`, `mariadb_version` — can optionally be set in
+Everything **except** `app`, hosts, and `compose_projects_root` — per-application
+setting overrides, `mariadb_version` — can optionally be set in
 `.docker/ddep.json`:
 
 ```json
@@ -155,7 +154,7 @@ deliberately empty).
 
 | Key                       | Required | Description |
 |---------------------------|:--------:|--------------|
-| `compose_projects_root`   | no  | Remote docker-compose base directory. Read from `.docker/inventory.yaml`'s `all.vars.compose_projects_root` if it deviates from the default; `.docker/ddep.json` may also set it directly. Default: `/opt/docker/compose` |
+| `compose_projects_root`   | no  | Remote docker-compose base directory. Read exclusively from `.docker/inventory.yaml`'s `all.vars.compose_projects_root`, if set - never from `.docker/ddep.json`. Default: `/opt/docker/compose` |
 | `mariadb_version`         | no  | MariaDB image tag used for dump/restore. Default: `lts` |
 | `settings.<app>.*`        | no  | Overrides any built-in setting for that application — see below |
 

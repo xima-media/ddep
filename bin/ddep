@@ -15,8 +15,9 @@ INVENTORY_FILE="$(pwd)/.docker/inventory.yaml"
 # Pinned by tag+digest, matching this org's convention elsewhere
 # (docker-compose-deploy). See run_yq for why this isn't just "require yq on PATH".
 YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025"
-# "app" and "hosts" always come from .docker/inventory.yaml (required), never from
-# .docker/ddep.json, even as a fallback - see load_inventory_config/load_config.
+# "app", "hosts", and "compose_projects_root" always come from .docker/inventory.yaml
+# (required), never from .docker/ddep.json, even as a fallback - see
+# load_inventory_config/load_config.
 #   app <- all.vars.app_name
 #   hosts.<host_key> <- "<ansible_user>@<ansible_host>" for every host, keyed by its
 #     own inventory key (e.g. --host customer_a for one of several hosts under a
@@ -28,7 +29,6 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #
 # .docker/ddep.json is optional, scoped only to per-application setting overrides:
 # {
-#   "compose_projects_root": "/opt/docker/compose",  # optional, overrides the built-in default
 #   "mariadb_version": "lts",                        # optional, overrides the built-in default
 #   "settings": {                                     # optional, per-application overrides
 #     "symfony": {
@@ -96,7 +96,8 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # Configuration:
 #   Built-in defaults, deep-merged with .docker/inventory.yaml (required - "app"/"hosts",
 #   plus compose_projects_root if it deviates from the default), then .docker/ddep.json
-#   (optional) - see the schema above.
+#   (optional, everything else - app/hosts/compose_projects_root there are ignored, with
+#   a warning) - see the schema above.
 #
 # Examples:
 #
@@ -391,11 +392,15 @@ load_config() {
         local_json="$(cat "${local_config}")"
 
         # Pre-inventory.yaml ddep.json schema - ignored now, never a fallback.
-        if jq -e '(.app != null) or (.hosts != null)' <<< "${local_json}" >/dev/null; then
-            echo "Warning: ${local_config} sets \"app\"/\"hosts\" - both are ignored." >&2
-            echo "         Host connection info and the app selector come exclusively" >&2
-            echo "         from ${INVENTORY_FILE} now - remove them from ${local_config}." >&2
-            local_json="$(jq 'del(.app, .hosts)' <<< "${local_json}")"
+        # compose_projects_root included: inventory.yaml's all.vars.
+        # compose_projects_root always wins when set, falling back to the
+        # built-in default when it isn't - never to a ddep.json value.
+        if jq -e '(.app != null) or (.hosts != null) or (.compose_projects_root != null)' <<< "${local_json}" >/dev/null; then
+            echo "Warning: ${local_config} sets \"app\"/\"hosts\"/\"compose_projects_root\" - all" >&2
+            echo "         ignored. These come exclusively from ${INVENTORY_FILE} now" >&2
+            echo "         (compose_projects_root falls back to the built-in default, never to" >&2
+            echo "         a ${local_config} value) - remove them from ${local_config}." >&2
+            local_json="$(jq 'del(.app, .hosts, .compose_projects_root)' <<< "${local_json}")"
         fi
     fi
 
