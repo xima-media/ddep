@@ -76,7 +76,7 @@ all:
   children:
     dev:
       hosts:
-        shared:
+        dev:
           ansible_host: dev-host
           ansible_user: user
     test:

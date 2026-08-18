@@ -207,7 +207,7 @@ _run_get_container_id() {
     '"
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = "symfony" ]                        # all.vars.app_name
-    [ "${lines[1]}" = "dev-user@dev-host" ]               # dev's one host (key "shared") - tier default
+    [ "${lines[1]}" = "dev-user@dev-host" ]               # dev's one host (key "shared", deliberately != "dev") - tier default works regardless of the host's own key name
     [ "${lines[2]}" = "test-user@test-host" ]             # test's one host (key "test") - tier default
     [ "${lines[3]}" = "customer-a-user@customer-a-host" ] # addressable by its own key, not just via "live"
     [ "${lines[4]}" = "customer-b-user@customer-b-host" ] # ditto - never collapsed into one "live" entry
