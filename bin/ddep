@@ -47,10 +47,8 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #   remote docker-compose directories are derived from `git remote get-url origin`).
 #   Passwordless SSH access to the target host is required, since every command
 #   makes at least one SSH/Docker-over-SSH round trip. A host not yet in your
-#   own known_hosts prompts to confirm it the normal ssh way (see
-#   ensure_ssh_host_trusted) - answer it before piping anything non-
-#   interactively (e.g. from cron/a script), since there's no prompt to answer
-#   there.
+#   known_hosts prompts to confirm it (see ensure_ssh_host_trusted) - answer
+#   that first if running non-interactively (cron, a script).
 #   .docker/hosts.yaml must exist, declaring at least "app" and one host.
 #
 # Usage:
@@ -549,22 +547,14 @@ get_mariadb_credentials() {
     fi
 }
 
-# Establishes trust in this host's SSH key before anything else connects to
-# it - as an explicit, plain ssh call before DOCKER_HOST=ssh://... is ever
-# exported, rather than relying on docker's own ssh transport to prompt for
-# it (that transport doesn't reliably surface an interactive host-key
-# prompt, so a genuinely new host could otherwise hang or fail with a
-# confusing error instead of a real prompt). StrictHostKeyChecking is left
-# at ssh's own default ("ask") deliberately - a brand-new host still asks the
-# person running ddep to confirm it interactively (the same prompt plain ssh
-# would show), it's just guaranteed to actually be shown here rather than
-# possibly swallowed by docker's transport. A host whose key has since
-# CHANGED (a real MITM, or a host silently reprovisioned) still gets no
-# prompt at all and fails outright - confirmed against a real SSH server for
-# both the new-host and changed-key cases. PasswordAuthentication/
-# KbdInteractiveAuthentication=no only disables a *password* prompt (this
-# script already assumes passwordless key auth - see the header comment) and
-# has no effect on the separate host-key prompt above.
+# Plain ssh call before DOCKER_HOST=ssh://... is exported, so a new host's
+# key-trust prompt (ssh's own default "ask" behavior - left untouched) is
+# guaranteed to actually show, rather than possibly swallowed by docker's own
+# ssh transport. A changed key still fails outright, no prompt - confirmed
+# against a real SSH server for both cases. PasswordAuthentication/
+# KbdInteractiveAuthentication=no only skips a *password* prompt (passwordless
+# key auth is already assumed - see the header comment); the host-key prompt
+# is unaffected.
 ensure_ssh_host_trusted() {
     if ! ssh -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no "${REMOTE_DOCKER_HOST}" true; then
         echo "Error: could not establish an SSH connection to '${REMOTE_DOCKER_HOST}' (host '${host}') - see ssh's own error above. A host key verification failure specifically (not a connection/auth failure) means the key on record for this host has changed - confirm with whoever manages it before proceeding, rather than removing the stale known_hosts entry yourself." >&2
