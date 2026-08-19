@@ -75,7 +75,7 @@ setup() {
 @test "config prints the resolved config as JSON, outside a git repo" {
     mkdir -p "$BATS_TEST_TMPDIR/.docker"
     cp "$FIXTURES/local.json" "$BATS_TEST_TMPDIR/.docker/ddep.json"
-    cp "$FIXTURES/inventory.yaml" "$BATS_TEST_TMPDIR/.docker/inventory.yaml"
+    cp "$FIXTURES/hosts.yaml" "$BATS_TEST_TMPDIR/.docker/hosts.yaml"
     run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" config'
     [ "$status" -eq 0 ]
     run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" config | jq -r "
@@ -85,18 +85,18 @@ setup() {
         (.settings.typo3 | type)
     "'
     [ "$status" -eq 0 ]
-    [ "${lines[0]}" = "symfony" ] # from inventory.yaml - ddep.json no longer sets app/hosts
+    [ "${lines[0]}" = "symfony" ] # from hosts.yaml - ddep.json no longer sets app/hosts
     [ "${lines[1]}" = "11.4" ]    # ddep.json's own override applied
     [ "${lines[2]}" = "2" ]       # array replaced, not appended
     [ "${lines[3]}" = "object" ]  # unrelated app (typo3) preserved from defaults
 }
 
-@test "config exits 1 without .docker/inventory.yaml, even with .docker/ddep.json present" {
+@test "config exits 1 without .docker/hosts.yaml, even with .docker/ddep.json present" {
     mkdir -p "$BATS_TEST_TMPDIR/.docker"
     cp "$FIXTURES/local.json" "$BATS_TEST_TMPDIR/.docker/ddep.json"
     run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" config'
     [ "$status" -eq 1 ]
-    [[ "$output" == *"inventory.yaml"* ]]
+    [[ "$output" == *"hosts.yaml"* ]]
     [[ "$output" == *"missing"* ]]
 }
 
@@ -167,7 +167,7 @@ _run_get_container_id() {
 @test "load_config deep-merges local config over the built-in defaults" {
     run bash -c '
         source "$DDEP"
-        INVENTORY_FILE="$FIXTURES/inventory.yaml"
+        HOSTS_FILE="$FIXTURES/hosts.yaml"
         LOCAL_CONFIG_FILE="$FIXTURES/local.json"
         load_config
         jq -r "
@@ -188,13 +188,13 @@ _run_get_container_id() {
     [ "${lines[5]}" = "object" ]               # unrelated app (typo3) preserved
 }
 
-# --- .docker/inventory.yaml integration
+# --- .docker/hosts.yaml integration
 
-@test "load_inventory_config derives app and per-host addressing from inventory.yaml" {
+@test "load_hosts_config derives app and per-host addressing from hosts.yaml" {
     run bash -c '
         source "$DDEP"
-        INVENTORY_FILE="$FIXTURES/inventory.yaml"
-        load_inventory_config
+        HOSTS_FILE="$FIXTURES/hosts.yaml"
+        load_hosts_config
     '
     [ "$status" -eq 0 ]
     run bash -c "echo '$output' | jq -r '
@@ -214,65 +214,65 @@ _run_get_container_id() {
     [ "${lines[5]}" = "customer-a-user@customer-a-host" ] # tier default = FIRST host in file order (customer_a)
 }
 
-@test "load_inventory_config returns {} when inventory.yaml doesn't exist" {
+@test "load_hosts_config returns {} when hosts.yaml doesn't exist" {
     run bash -c '
         source "$DDEP"
-        INVENTORY_FILE="$BATS_TEST_TMPDIR/.docker/inventory.yaml"
-        load_inventory_config
+        HOSTS_FILE="$BATS_TEST_TMPDIR/.docker/hosts.yaml"
+        load_hosts_config
     '
     [ "$status" -eq 0 ]
     [ "$output" = "{}" ]
 }
 
-@test "load_config uses inventory.yaml's app/hosts when .docker/ddep.json is absent" {
+@test "load_config uses hosts.yaml's app/hosts when .docker/ddep.json is absent" {
     run bash -c '
         source "$DDEP"
-        INVENTORY_FILE="$FIXTURES/inventory.yaml"
+        HOSTS_FILE="$FIXTURES/hosts.yaml"
         LOCAL_CONFIG_FILE="$BATS_TEST_TMPDIR/.docker/ddep.json"
         load_config
         jq -r ".app, .hosts.customer_b, .mariadb_version" "$CONFIG_FILE"
     '
     [ "$status" -eq 0 ]
-    [ "${lines[0]}" = "symfony" ]     # from inventory.yaml, no ddep.json needed at all
+    [ "${lines[0]}" = "symfony" ]     # from hosts.yaml, no ddep.json needed at all
     [ "${lines[1]}" = "customer-b-user@customer-b-host" ]
     [ "${lines[2]}" = "lts" ]         # built-in default, untouched by either file
 }
 
-@test "load_config: compose_projects_root comes from inventory.yaml only when it deviates from the default" {
+@test "load_config: compose_projects_root comes from hosts.yaml only when it deviates from the default" {
     run bash -c '
         source "$DDEP"
-        INVENTORY_FILE="$FIXTURES/inventory.yaml"
+        HOSTS_FILE="$FIXTURES/hosts.yaml"
         LOCAL_CONFIG_FILE="$BATS_TEST_TMPDIR/.docker/ddep.json"
         load_config
         jq -r ".compose_projects_root" "$CONFIG_FILE"
     '
     [ "$status" -eq 0 ]
-    [ "$output" = "/opt/docker/compose" ] # inventory.yaml never sets it - built-in default applies
+    [ "$output" = "/opt/docker/compose" ] # hosts.yaml never sets it - built-in default applies
 
     run bash -c '
         source "$DDEP"
-        INVENTORY_FILE="$FIXTURES/inventory_custom_root.yaml"
+        HOSTS_FILE="$FIXTURES/hosts_custom_root.yaml"
         LOCAL_CONFIG_FILE="$BATS_TEST_TMPDIR/.docker/ddep.json"
         load_config
         jq -r ".compose_projects_root" "$CONFIG_FILE"
     '
     [ "$status" -eq 0 ]
-    [ "$output" = "/srv/apps" ] # inventory.yaml deviates from the default - its value wins
+    [ "$output" = "/srv/apps" ] # hosts.yaml deviates from the default - its value wins
 }
 
-@test "load_config: ddep.json is not allowed to override app/hosts/compose_projects_root - inventory.yaml or the built-in default win, with a warning" {
+@test "load_config: ddep.json is not allowed to override app/hosts/compose_projects_root - hosts.yaml or the built-in default win, with a warning" {
     run --separate-stderr bash -c '
         source "$DDEP"
-        INVENTORY_FILE="$FIXTURES/inventory.yaml"
+        HOSTS_FILE="$FIXTURES/hosts.yaml"
         LOCAL_CONFIG_FILE="$FIXTURES/local_with_legacy_hosts.json"
         load_config
         jq -r ".app, .hosts.dev, .hosts.customer_a, .compose_projects_root, .mariadb_version" "$CONFIG_FILE"
     '
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = "symfony" ]
-    [ "${lines[1]}" = "dev-user@dev-host" ]                # inventory's value, NOT local_with_legacy_hosts.json's "user@dev-host"
-    [ "${lines[2]}" = "customer-a-user@customer-a-host" ]  # inventory's own multi-host entry, untouched
-    [ "${lines[3]}" = "/opt/docker/compose" ]              # built-in default - NOT local_with_legacy_hosts.json's "/legacy/path" (inventory.yaml doesn't set it either)
+    [ "${lines[1]}" = "dev-user@dev-host" ]                # hosts.yaml's value, NOT local_with_legacy_hosts.json's "user@dev-host"
+    [ "${lines[2]}" = "customer-a-user@customer-a-host" ]  # hosts.yaml's own multi-host entry, untouched
+    [ "${lines[3]}" = "/opt/docker/compose" ]              # built-in default - NOT local_with_legacy_hosts.json's "/legacy/path" (hosts.yaml doesn't set it either)
     [ "${lines[4]}" = "11.4" ]                             # non-app/hosts/compose_projects_root overrides from ddep.json still apply
     [[ "$stderr" == *"ignored"* ]]                         # warns that ddep.json's app/hosts/compose_projects_root were ignored
 }
