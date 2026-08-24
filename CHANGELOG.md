@@ -29,9 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ddep.json`'s own `app`/`hosts`/`compose_projects_root` keys are no longer
   read at all, not even as a fallback (a warning is printed if a project's
   `ddep.json` still sets any of them, and all are ignored).
-  `compose_projects_root` specifically: `all.vars.compose_projects_root` wins
-  whenever it's set, falling back to the built-in default when it isn't -
-  never to a `ddep.json` value. `.docker/hosts.yaml` is now required;
+  `compose_projects_root` specifically: required in `all.vars`, no built-in
+  default, never a `ddep.json` value. `.docker/hosts.yaml` is now required;
   `ddep.json` becomes fully optional, scoped only to per-application setting
   overrides (`settings.<app>.*`, `mariadb_version`). Migration: move `app`/
   `hosts`/`compose_projects_root` out of `ddep.json` into `.docker/

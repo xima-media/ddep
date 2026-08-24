@@ -181,7 +181,7 @@ _run_get_container_id() {
     '
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = "11.4" ]                 # scalar override applied
-    [ "${lines[1]}" = "/opt/docker/compose" ] # default preserved
+    [ "${lines[1]}" = "/opt/docker/compose" ] # hosts.yaml's own value, untouched by local.json
     [ "${lines[2]}" = "2" ]                    # array replaced, not appended (default had 1)
     [ "${lines[3]}" = "^only_this$" ]          # replaced with local content
     [ "${lines[4]}" = "true" ]                 # sibling default (migration) preserved
@@ -238,7 +238,7 @@ _run_get_container_id() {
     [ "${lines[2]}" = "lts" ]         # built-in default, untouched by either file
 }
 
-@test "load_config: compose_projects_root comes from hosts.yaml only when it deviates from the default" {
+@test "load_config: compose_projects_root is required, no built-in default" {
     run bash -c '
         source "$DDEP"
         HOSTS_FILE="$FIXTURES/hosts.yaml"
@@ -247,7 +247,7 @@ _run_get_container_id() {
         jq -r ".compose_projects_root" "$CONFIG_FILE"
     '
     [ "$status" -eq 0 ]
-    [ "$output" = "/opt/docker/compose" ] # hosts.yaml never sets it - built-in default applies
+    [ "$output" = "/opt/docker/compose" ] # hosts.yaml's own explicit value
 
     run bash -c '
         source "$DDEP"
@@ -257,10 +257,34 @@ _run_get_container_id() {
         jq -r ".compose_projects_root" "$CONFIG_FILE"
     '
     [ "$status" -eq 0 ]
-    [ "$output" = "/srv/apps" ] # hosts.yaml deviates from the default - its value wins
+    [ "$output" = "/srv/apps" ]
+
+    mkdir -p "$BATS_TEST_TMPDIR/.docker"
+    cat > "$BATS_TEST_TMPDIR/.docker/hosts_no_root.yaml" <<'YAML'
+all:
+  vars:
+    app_name: symfony
+  children:
+    dev:
+      hosts:
+        dev:
+          ansible_host: dev-host
+          ansible_user: dev-user
+YAML
+    # validate_config directly, not `ddep config` - that command deliberately
+    # skips validation, so a still-incomplete config can be inspected.
+    run --separate-stderr bash -c '
+        source "$DDEP"
+        HOSTS_FILE="$BATS_TEST_TMPDIR/.docker/hosts_no_root.yaml"
+        LOCAL_CONFIG_FILE="$BATS_TEST_TMPDIR/.docker/ddep.json"
+        load_config
+        validate_config
+    '
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"compose_projects_root"* ]]
 }
 
-@test "load_config: ddep.json is not allowed to override app/hosts/compose_projects_root - hosts.yaml or the built-in default win, with a warning" {
+@test "load_config: ddep.json is not allowed to override app/hosts/compose_projects_root - hosts.yaml wins, with a warning" {
     run --separate-stderr bash -c '
         source "$DDEP"
         HOSTS_FILE="$FIXTURES/hosts.yaml"
@@ -272,7 +296,7 @@ _run_get_container_id() {
     [ "${lines[0]}" = "symfony" ]
     [ "${lines[1]}" = "dev-user@dev-host" ]                # hosts.yaml's value, NOT local_with_legacy_hosts.json's "user@dev-host"
     [ "${lines[2]}" = "customer-a-user@customer-a-host" ]  # hosts.yaml's own multi-host entry, untouched
-    [ "${lines[3]}" = "/opt/docker/compose" ]              # built-in default - NOT local_with_legacy_hosts.json's "/legacy/path" (hosts.yaml doesn't set it either)
+    [ "${lines[3]}" = "/opt/docker/compose" ]              # hosts.yaml's own value - NOT local_with_legacy_hosts.json's "/legacy/path"
     [ "${lines[4]}" = "11.4" ]                             # non-app/hosts/compose_projects_root overrides from ddep.json still apply
     [[ "$stderr" == *"ignored"* ]]                         # warns that ddep.json's app/hosts/compose_projects_root were ignored
 }

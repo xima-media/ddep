@@ -96,10 +96,10 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #                           currently deployed on --host
 #
 # Configuration:
-#   Built-in defaults, deep-merged with .docker/hosts.yaml (required - "app"/"hosts",
-#   plus compose_projects_root if it deviates from the default), then .docker/ddep.json
-#   (optional, everything else - app/hosts/compose_projects_root there are ignored, with
-#   a warning) - see the schema above.
+#   Built-in defaults, deep-merged with .docker/ddep.json (optional, per-application
+#   setting overrides), overlaid with .docker/hosts.yaml's "app"/"hosts"/
+#   "compose_projects_root" - all three required, and exclusively hosts.yaml's (ddep.json
+#   setting them is ignored, with a warning) - see the schema above.
 #
 # Examples:
 #
@@ -185,7 +185,6 @@ check_requirements() {
 load_default_config() {
     cat <<'JSON'
 {
-  "compose_projects_root": "/opt/docker/compose",
   "mariadb_version": "lts",
   "settings": {
     "typo3": {
@@ -337,12 +336,13 @@ run_yq() {
     DOCKER_HOST='' docker run --rm -i "${YQ_IMAGE}" eval -o=json -r "$1" - < "${HOSTS_FILE}"
 }
 
-# Derives {"app": ..., "hosts": {...}} from .docker/hosts.yaml - the
-# exclusive source for both (see HOSTS_FILE's comment); "{}" if the file
-# doesn't exist, though load_config never lets a real run get this far
-# without it. Uses run_yq for the YAML reads and jq to assemble the result,
-# rather than one large yq expression, since each is already relied on
-# elsewhere in this script.
+# Derives {"app": ..., "hosts": {...}, "compose_projects_root": ...} from
+# .docker/hosts.yaml - the exclusive source for all three (see HOSTS_FILE's
+# comment); "{}" if the file doesn't exist, though load_config never lets a
+# real run get this far without it. compose_projects_root has no built-in
+# default - validate_config requires it, same as app/hosts. Uses run_yq for
+# the YAML reads and jq to assemble the result, rather than one large yq
+# expression, since each is already relied on elsewhere in this script.
 load_hosts_config() {
     if [[ ! -f "${HOSTS_FILE}" ]]; then
         echo '{}'
@@ -352,8 +352,6 @@ load_hosts_config() {
     local app compose_projects_root
     app="$(run_yq '.all.vars.app_name // ""')"
     # Same directory ansible/deploy.yml's remote_project_dir is built from.
-    # Only read here if it deviates from the shared built-in default - an
-    # unset value falls through to load_default_config's own default.
     compose_projects_root="$(run_yq '.all.vars.compose_projects_root // ""')"
 
     local group group_hosts first_user first_addr hosts_json='{}'
@@ -394,18 +392,21 @@ load_config() {
         local_json="$(cat "${local_config}")"
 
         # Pre-hosts.yaml ddep.json schema - ignored now, never a fallback.
-        # compose_projects_root included: hosts.yaml's all.vars.
-        # compose_projects_root always wins when set, falling back to the
-        # built-in default when it isn't - never to a ddep.json value.
+        # app/hosts/compose_projects_root are exclusively load_hosts_config's
+        # concern (see below) - ddep.json never contributes to them at all.
         if jq -e '(.app != null) or (.hosts != null) or (.compose_projects_root != null)' <<< "${local_json}" >/dev/null; then
             echo "Warning: ${local_config} sets \"app\"/\"hosts\"/\"compose_projects_root\" - all" >&2
-            echo "         ignored. These come exclusively from ${HOSTS_FILE} now" >&2
-            echo "         (compose_projects_root falls back to the built-in default, never to" >&2
-            echo "         a ${local_config} value) - remove them from ${local_config}." >&2
+            echo "         ignored. These are required in ${HOSTS_FILE} instead - remove them" >&2
+            echo "         from ${local_config}." >&2
             local_json="$(jq 'del(.app, .hosts, .compose_projects_root)' <<< "${local_json}")"
         fi
     fi
 
+    # load_hosts_config's app/hosts/compose_projects_root and this
+    # default+local settings merge are two separate concerns, only ever tied
+    # together by the app name - so $hosts_config is overlaid flat (+), not
+    # deep-merged: none of its keys ever exist in $default or $local (the
+    # latter guaranteed by the strip above) for a recursive merge to matter.
     jq -n \
         --slurpfile default <(load_default_config) \
         --argjson hosts_config "$(load_hosts_config)" \
@@ -423,7 +424,7 @@ load_config() {
                 end
             );
 
-        deepmerge(deepmerge($default[0]; $hosts_config); $local)
+        deepmerge($default[0]; $local) + $hosts_config
         ' > "${CONFIG_FILE}"
 }
 
@@ -436,6 +437,10 @@ validate_config() {
 
     if [[ "$(jq -r '.hosts // empty' "${CONFIG_FILE}")" == "" ]]; then
         missing+=("hosts")
+    fi
+
+    if [[ "$(jq -r '.compose_projects_root // empty' "${CONFIG_FILE}")" == "" ]]; then
+        missing+=("compose_projects_root")
     fi
 
     if [[ "${#missing[@]}" -gt 0 ]]; then
@@ -454,13 +459,9 @@ parse_config_json() {
         exit 1
     fi
 
+    # Already guaranteed non-empty by validate_config, called before this.
     COMPOSE_PROJECTS_ROOT=$(jq -r '.compose_projects_root' "${CONFIG_FILE}")
     COMPOSE_PROJECTS_ROOT="${COMPOSE_PROJECTS_ROOT%/}"
-
-    if [[ -z "${COMPOSE_PROJECTS_ROOT}" || "${COMPOSE_PROJECTS_ROOT}" == "null" ]]; then
-        echo "Error: compose_projects_root is missing" >&2
-        exit 1
-    fi
 
     MARIADB_VERSION=$(jq -r '.mariadb_version // "lts"' "${CONFIG_FILE}")
 
