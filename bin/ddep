@@ -954,14 +954,18 @@ elif [ "${command}" = "db:pull" ]; then
     ensure_mariadb_image
 
     ignore_args=()
+    view_ignore_args=()
 
     if [ "${#DB_EXCLUDE_TABLES[@]}" -gt 0 ]; then
         # Convert JSON regex array into MariaDB REGEXP expression
         regex=$(IFS="|"; echo "${DB_EXCLUDE_TABLES[*]}")
 
+        # TABLE_TYPE too, not just TABLE_NAME - a VIEW gets excluded from the
+        # structure pass below as well (see its comment for why), a plain
+        # table doesn't.
         # MYSQL_PWD is exported with tracing disabled so --debug never echoes it,
         # and forwarded via -e (not -p) so it never appears in argv either.
-        tables=$(
+        matches=$(
             { set +x; } 2>/dev/null
             export MYSQL_PWD="${db_password}"
             docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
@@ -970,25 +974,33 @@ elif [ "${command}" = "db:pull" ]; then
                 --port '${db_port}' \
                 --user '${db_user}' \
                 -N -e \"
-                SELECT TABLE_NAME
+                SELECT TABLE_NAME, TABLE_TYPE
                 FROM information_schema.tables
                 WHERE table_schema='${db_name}'
                 AND TABLE_NAME REGEXP '${regex}';
                 \"")
 
-        for table in ${tables}; do
+        while IFS=$'\t' read -r table type; do
+            [ -z "${table}" ] && continue
             ignore_args+=( "--ignore-table=${db_name}.${table}" )
-        done
+            if [ "${type}" = "VIEW" ]; then
+                view_ignore_args+=( "--ignore-table=${db_name}.${table}" )
+            fi
+        done <<< "${matches}"
     fi
 
     # Dump structure and data separately, each gzip-compressed inside the
     # container before it crosses the SSH-tunnelled Docker connection, then
     # concatenated into one multi-member gzip stream on stdout (gunzip handles
     # concatenated gzip members transparently, decompressing back-to-back).
-    # The structure half covers every table, INCLUDING ones in exclude_tables, so
-    # an excluded table (e.g. a sessions table) still exists — with the correct,
-    # empty schema — after a db:push, even on a brand-new environment that never
-    # had it. Only its rows are skipped, by the data half below.
+    # The structure half covers every excluded TABLE regardless (e.g. a
+    # sessions table still exists, with the correct empty schema, after a
+    # db:push even on a brand-new environment that never had it - only its
+    # rows are skipped, by the data half below) - but not an excluded VIEW: a
+    # view has no data of its own for the exclusion to matter there anyway,
+    # and is meant to be fully recreated elsewhere (db.migration, a
+    # run_after_sync-style script) - a stale raw copy in the dump is
+    # redundant at best.
     # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
     # never echoes it, and forwarded via -e (not -p) so it never appears in argv.
     (
@@ -996,8 +1008,8 @@ elif [ "${command}" = "db:pull" ]; then
         export MYSQL_PWD="${db_password}"
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'mariadb-dump --host="$1" --port="$2" --user="$3" --single-transaction --skip-lock-tables --no-data "$4" | gzip' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${db_name}"
+            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
+            sh "${db_host}" "${db_port}" "${db_user}" "${view_ignore_args[@]}" "${db_name}"
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
             sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
