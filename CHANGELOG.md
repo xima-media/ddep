@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `db:push` imports with `mariadb --force` - a dump from anywhere other than
+  this same app's own `db:pull` (a plain mysqldump, `ddev export-db`, ...) can
+  carry a statement this connection's user can't run as-is, e.g. a view's
+  `CREATE` with a `DEFINER` from wherever it was dumped, which fails with
+  "Access denied; you need ... SET USER ... privilege" for any other user.
+  Without `--force`, that error aborted the whole import before the
+  post-import migration (which is what actually re-creates such a view
+  correctly) ever ran.
+- `db:pull` now excludes matching `exclude_tables` only from the data export; the
+  structure export retains full table and view definitions (including excluded
+  ones).
 - **Breaking:** flags must now come before the command (e.g. `ddep --host dev
   --env x db:push`, not `ddep db:push --env x`) - previously `ssh` silently
   swallowed any flags placed after it into the remote command instead of
