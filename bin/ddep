@@ -535,8 +535,19 @@ get_mariadb_credentials() {
 # KbdInteractiveAuthentication=no only skips a *password* prompt (passwordless
 # key auth is already assumed - see the header comment); the host-key prompt
 # is unaffected.
+#
+# -n is required: this probe otherwise inherits ddep's own stdin - for db:push,
+# that's the piped SQL dump. ssh reads/forwards stdin to set up the session even
+# for a trivial remote command like `true`, so without -n it silently consumes
+# however many bytes it buffers off the front of the dump before the connection
+# tears down (non-deterministic - depends on ssh's own timing), leaving
+# db:push's own `cat > tmpfile` (which runs much later) with a truncated,
+# mid-stream start. Confirmed as the actual cause of intermittent db:push
+# corruption that no amount of gzip/charset/binary-mode/FK-checks tuning fixed,
+# since none of those ever touched the real problem: data already missing
+# before db:push's own stdin read even began.
 ensure_ssh_host_trusted() {
-    if ! ssh -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no "${REMOTE_DOCKER_HOST}" true; then
+    if ! ssh -n -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no "${REMOTE_DOCKER_HOST}" true; then
         echo "Error: could not establish an SSH connection to '${REMOTE_DOCKER_HOST}' (host '${host}') - see ssh's own error above. A host key verification failure specifically (not a connection/auth failure) means the key on record for this host has changed - confirm with whoever manages it before proceeding, rather than removing the stale known_hosts entry yourself." >&2
         exit 1
     fi
