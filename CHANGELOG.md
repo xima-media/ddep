@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Without `--force`, that error aborted the whole import before the
   post-import migration (which is what actually re-creates such a view
   correctly) ever ran.
+- `db:pull` now excludes matching `exclude_tables` only from the data export; the
+  structure export retains full table and view definitions (including excluded
+  ones).
 - **Breaking:** flags must now come before the command (e.g. `ddep --host dev
   --env x db:push`, not `ddep db:push --env x`) - previously `ssh` silently
   swallowed any flags placed after it into the remote command instead of
