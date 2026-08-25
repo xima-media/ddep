@@ -190,13 +190,6 @@ load_default_config() {
     "typo3": {
       "db": {
         "migration": "/usr/bin/php vendor/bin/typo3 database:updateschema --no-interaction --quiet",
-        "env": {
-          "host": "TYPO3_CONF_VARS__DB__Connections__Default__host",
-          "dbname": "TYPO3_CONF_VARS__DB__Connections__Default__dbname",
-          "user": "TYPO3_CONF_VARS__DB__Connections__Default__user",
-          "password": "TYPO3_CONF_VARS__DB__Connections__Default__password",
-          "port": "TYPO3_CONF_VARS__DB__Connections__Default__port"
-        },
         "exclude_tables": [
           "^cf_.*",
           "^cache_.*",
@@ -254,13 +247,6 @@ load_default_config() {
     "symfony": {
       "db": {
         "migration": "/usr/bin/php bin/console doctrine:migrations:migrate --no-interaction --quiet",
-        "env": {
-          "host": "SYMFONY_DATABASE_HOST",
-          "dbname": "SYMFONY_DATABASE_DBNAME",
-          "user": "SYMFONY_DATABASE_USER",
-          "password": "SYMFONY_DATABASE_PASSWORD",
-          "port": "SYMFONY_DATABASE_PORT"
-        },
         "exclude_tables": [
           "^sessions$"
         ]
@@ -475,13 +461,6 @@ parse_config_json() {
     # Database configuration
     DB_MIGRATION=$(jq -r "${APP_CONFIG}.db.migration" "${CONFIG_FILE}")
 
-    DB_ENV_HOST=$(jq -r "${APP_CONFIG}.db.env.host" "${CONFIG_FILE}")
-    DB_ENV_DBNAME=$(jq -r "${APP_CONFIG}.db.env.dbname" "${CONFIG_FILE}")
-    DB_ENV_USER=$(jq -r "${APP_CONFIG}.db.env.user" "${CONFIG_FILE}")
-    DB_ENV_PASSWORD=$(jq -r "${APP_CONFIG}.db.env.password" "${CONFIG_FILE}")
-    DB_ENV_PORT=$(jq -r "${APP_CONFIG}.db.env.port" "${CONFIG_FILE}")
-
-
     # Rsync configuration
     RSYNC_MAX_SIZE_MB=$(jq -r "${APP_CONFIG}.rsync.max_size_mb" "${CONFIG_FILE}")
 
@@ -535,11 +514,11 @@ get_mariadb_credentials() {
     local env_content
     env_content=$(ssh "${REMOTE_DOCKER_HOST}" "cat '${environment_file_path}'")
 
-    _mariadb_host=$(get_env_value "${DB_ENV_HOST}" <<< "${env_content}")
-    _mariadb_name=$(get_env_value "${DB_ENV_DBNAME}" <<< "${env_content}")
-    _mariadb_user=$(get_env_value "${DB_ENV_USER}" <<< "${env_content}")
-    _mariadb_password=$(get_env_value "${DB_ENV_PASSWORD}" <<< "${env_content}")
-    _mariadb_port=$(get_env_value "${DB_ENV_PORT}" <<< "${env_content}")
+    _mariadb_host=$(get_env_value "MARIADB_HOST" <<< "${env_content}")
+    _mariadb_name=$(get_env_value "MARIADB_DBNAME" <<< "${env_content}")
+    _mariadb_user=$(get_env_value "MARIADB_USER" <<< "${env_content}")
+    _mariadb_password=$(get_env_value "MARIADB_PASSWORD" <<< "${env_content}")
+    _mariadb_port=$(get_env_value "MARIADB_PORT" <<< "${env_content}")
 
     _mariadb_port=${_mariadb_port:-3306}
 

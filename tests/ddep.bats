@@ -114,6 +114,53 @@ setup() {
     [ -z "$output" ]
 }
 
+# get_mariadb_credentials needs a real external `ssh` stub on PATH (same reason
+# as _stub_docker below - a shell-function stub isn't found the same way).
+# Responds to the two remote calls the function makes: "test -f ..." (file
+# exists) and "cat ..." (its content).
+_stub_ssh() {
+    local stub="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "$stub"
+    cat > "$stub/ssh" <<'STUB'
+#!/bin/sh
+# $1 = host, $2 = remote command string. SSH_CAT_OUTPUT is read from this
+# stub's own inherited environment at invocation time, not baked in when the
+# stub is written (the heredoc above is quoted for exactly this reason).
+case "$2" in
+    test\ -f*) exit 0 ;;
+    cat*) printf '%s' "$SSH_CAT_OUTPUT" ;;
+esac
+STUB
+    chmod +x "$stub/ssh"
+    echo "$stub"
+}
+
+@test "get_mariadb_credentials reads the canonical MARIADB_* names, not per-app ones" {
+    local stub; stub="$(_stub_ssh)"
+    PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'MARIADB_HOST=10.0.0.8\nMARIADB_DBNAME=mydb\nMARIADB_USER=myuser\nMARIADB_PASSWORD=mypass\nMARIADB_PORT=3307\nSYMFONY_DATABASE_HOST=should-be-ignored\n' \
+        run bash -c '
+        source "$DDEP"
+        REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=staging
+        get_mariadb_credentials h n u p port
+        echo "HOST=$h NAME=$n USER=$u PASS=$p PORT=$port"
+    '
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"HOST=10.0.0.8 NAME=mydb USER=myuser PASS=mypass PORT=3307"* ]]
+}
+
+@test "get_mariadb_credentials defaults the port to 3306 when unset" {
+    local stub; stub="$(_stub_ssh)"
+    PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'MARIADB_HOST=10.0.0.8\nMARIADB_DBNAME=mydb\nMARIADB_USER=myuser\nMARIADB_PASSWORD=mypass\n' \
+        run bash -c '
+        source "$DDEP"
+        REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=staging
+        get_mariadb_credentials h n u p port
+        echo "PORT=$port"
+    '
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PORT=3306"* ]]
+}
+
 # get_container_id needs a real external `docker` stub on PATH (a shell-function
 # stub would not be found by `command -v`/exec the same way and complicates the
 # nameref call). This helper writes one that prints $DOCKER_PS_OUTPUT for `ps`.

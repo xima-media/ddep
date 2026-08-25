@@ -92,8 +92,12 @@ all:
 ```
 
 `app_name` must be `typo3` or `symfony` — these are the two application types
-with built-in defaults (DB env var names, migration command, rsync
-directories/excludes). `ddep` derives its own connection info from this file:
+with built-in defaults (migration command, rsync directories/excludes). DB
+credentials themselves are read from a fixed set of env var names
+(`MARIADB_HOST`/`MARIADB_PORT`/`MARIADB_DBNAME`/`MARIADB_USER`/
+`MARIADB_PASSWORD`) in the remote `.app.env.provision` file, the same for
+every app - see [Security](#security). `ddep` derives its own connection info
+from this file:
 
 - `app` ← `all.vars.app_name`
 - every host is addressable by its own hosts.yaml key as `--host <key>` —
@@ -166,7 +170,7 @@ your local config. Whatever you set there **fully replaces** the built-in
 default at that path — objects are merged key by key, but arrays and scalars
 are replaced outright, never appended to or merged element-by-element.
 
-The built-in defaults for each application (`db.migration`, `db.env.*`,
+The built-in defaults for each application (`db.migration`,
 `db.exclude_tables`, `rsync.max_size_mb`, `rsync.remote_path`,
 `rsync.directories`, `rsync.exclude_paths`, `rsync.exclude_extensions`) live in
 `load_default_config()` inside `bin/ddep` — copy the path you want to change

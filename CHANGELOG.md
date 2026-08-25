@@ -32,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** database credentials are now read from a single fixed set of
+  env var names in the remote `.app.env.provision` file - `MARIADB_HOST`,
+  `MARIADB_PORT`, `MARIADB_DBNAME`, `MARIADB_USER`, `MARIADB_PASSWORD` -
+  instead of per-application names (`TYPO3_CONF_VARS__DB__Connections__
+  Default__*` for typo3, `SYMFONY_DATABASE_*` for symfony). The per-app
+  `settings.<app>.db.env` override key is gone along with it - it was the
+  only reason the two apps' `db` defaults differed at all beyond
+  `migration`/`exclude_tables`. Migration: before upgrading, make sure every
+  environment's `.app.env.provision` is regenerated to also set the
+  `MARIADB_*` names (e.g. as aliases alongside whatever app-specific names
+  your provisioning already writes) - `db:pull`/`db:push`/`ssh` fail against
+  any environment whose `.app.env.provision` doesn't have them yet.
 - **Breaking:** `app`, host connection info, and `compose_projects_root`
   (`ddep.json`'s former `environments_path` - renamed for consistency with
   docker-compose-deploy's own field name for the same directory) now come
