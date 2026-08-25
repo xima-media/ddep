@@ -953,15 +953,18 @@ elif [ "${command}" = "db:push" ]; then
     )
 
     # The DB import already succeeded; a missing/ambiguous container here only
-    # means the migration is skipped, so this is a warning, not a fatal error.
-    # Suppress get_container_id's own message and keep the softer warning.
-    if get_container_id container_id 2>/dev/null; then
+    # means the migration is skipped, so this is a warning, not a fatal error -
+    # but get_container_id's own message (not suppressed here) explains WHICH:
+    # zero matched, or multiple (e.g. a stale container left over from a
+    # previous deploy) - a blanket "not found" wrongly implied the former even
+    # when it was actually the latter, confirmed against a real run.
+    if get_container_id container_id; then
         echo "Running database migration for ${APP_NAME}..."
 
         docker exec "${container_id}" \
             bash -lc "${DB_MIGRATION}"
     else
-        echo "Warning: container ${APP_NAME} not found, skipping migration" >&2
+        echo "Warning: skipping migration - see above" >&2
     fi
 
 elif [ "${command}" = "db:pull" ]; then
