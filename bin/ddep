@@ -929,11 +929,25 @@ elif [ "${command}" = "db:push" ]; then
     # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
     # (set -x) never echoes the password; it stays scoped to the mariadb run and
     # is still forwarded via -e (not -p), so it never appears in argv either.
+    #
+    # --force: a dump from anywhere other than this same app's own db:pull (a
+    # plain mysqldump, ddev export-db, ...) can contain statements this
+    # connection's user can't run as-is - e.g. a view's CREATE carrying a
+    # DEFINER from wherever it was dumped, which fails with "Access denied;
+    # you need ... SET USER ... privilege" for any other user (confirmed
+    # against a real run). Without --force, mariadb aborts the whole import on
+    # that first error, so the migration below - which is what actually
+    # re-creates such a view correctly (db.migration, a run_after_sync-style
+    # script) - never even runs. --force logs the failing statement and moves
+    # on instead, importing everything else; confirmed it also exits 0
+    # (not just continuing past the error, but not failing this whole
+    # subshell either), so it doesn't trip this script's own set -e before
+    # reaching the migration step.
     (
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
         docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'gunzip -c | mariadb --host="$1" --port="$2" --user="$3" "$4"' \
+            sh -c 'gunzip -c | mariadb --force --host="$1" --port="$2" --user="$3" "$4"' \
             sh "${db_host}" "${db_port}" "${db_user}" "${db_name}" \
             < "${tmpfile}"
     )
