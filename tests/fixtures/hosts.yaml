@@ -1,6 +1,7 @@
 all:
   vars:
     app_name: symfony
+    compose_projects_root: /opt/docker/compose
   children:
     dev:
       hosts:

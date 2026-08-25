@@ -108,13 +108,10 @@ directories/excludes). `ddep` derives its own connection info from this file:
 
 This is the **only** place `app`, host connection info, and
 `compose_projects_root` (the remote docker-compose base directory) come from —
-`ddep.json` (below) can no longer set or override any of them, even as a
-fallback. `all.vars.compose_projects_root` wins whenever it's set; when it
-isn't, `ddep` falls back to its own built-in default
-(`/opt/docker/compose`) — never to a `ddep.json` value. This is deliberate:
-exactly one file owns "which app template," "how do I connect to this host,"
-and "where do deployed environments live," so it can never silently disagree
-with itself.
+all three required, and `ddep.json` (below) can no longer set or override any
+of them, even as a fallback. This is deliberate: exactly one file owns "which
+app template," "how do I connect to this host," and "where do deployed
+environments live," so it can never silently disagree with itself.
 
 No new local dependency is required to read it: `ddep` prefers a verified
 host-installed [`mikefarah/yq`](https://github.com/mikefarah/yq) and otherwise
@@ -154,7 +151,7 @@ deliberately empty).
 
 | Key                       | Required | Description |
 |---------------------------|:--------:|--------------|
-| `compose_projects_root`   | no  | Remote docker-compose base directory. Read exclusively from `.docker/hosts.yaml`'s `all.vars.compose_projects_root`, if set - never from `.docker/ddep.json`. Default: `/opt/docker/compose` |
+| `compose_projects_root`   | yes | Remote docker-compose base directory. Set in `.docker/hosts.yaml`'s `all.vars.compose_projects_root` - no built-in default, never read from `.docker/ddep.json` |
 | `mariadb_version`         | no  | MariaDB image tag used for dump/restore. Default: `lts` |
 | `settings.<app>.*`        | no  | Overrides any built-in setting for that application — see below |
 
