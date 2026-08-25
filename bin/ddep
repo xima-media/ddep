@@ -926,7 +926,7 @@ elif [ "${command}" = "db:push" ]; then
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
         docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'gunzip -c | mariadb --force --host="$1" --port="$2" --user="$3" "$4"' \
+            sh -c 'gunzip -c | mariadb --force --default-character-set=utf8mb4 --host="$1" --port="$2" --user="$3" "$4"' \
             sh "${db_host}" "${db_port}" "${db_user}" "${db_name}" \
             < "${tmpfile}"
     )
@@ -978,6 +978,12 @@ elif [ "${command}" = "db:pull" ]; then
         done
     fi
 
+    # --default-character-set=utf8mb4 on every mariadb/mariadb-dump call (here and in
+    # db:push below): without it, the client library's own default (latin1) silently
+    # mangles multi-byte UTF-8 content on the way through - confirmed against a real
+    # dump containing German typographic quotes, which corrupted into stray bytes that
+    # broke SQL statement quoting entirely (not just mojibake) once re-imported.
+    #
     # Dump structure and data separately, each gzip-compressed inside the
     # container before it crosses the SSH-tunnelled Docker connection, then
     # concatenated into one multi-member gzip stream on stdout (gunzip handles
@@ -993,11 +999,11 @@ elif [ "${command}" = "db:pull" ]; then
         export MYSQL_PWD="${db_password}"
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'mariadb-dump --host="$1" --port="$2" --user="$3" --single-transaction --skip-lock-tables --no-data "$4" | gzip' \
+            sh -c 'mariadb-dump --default-character-set=utf8mb4 --host="$1" --port="$2" --user="$3" --single-transaction --skip-lock-tables --no-data "$4" | gzip' \
             sh "${db_host}" "${db_port}" "${db_user}" "${db_name}"
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
+            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
             sh "${db_host}" "${db_port}" "${db_user}" "${ignore_args[@]}" "${db_name}"
     )
 fi

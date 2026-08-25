@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `db:pull`/`db:push` now pin `--default-character-set=utf8mb4` on every
+  `mariadb-dump`/`mariadb` invocation - without it, the client library's own
+  default (`latin1`) silently mangled multi-byte UTF-8 content on the way
+  through. Confirmed against a real dump containing German typographic
+  quotes: the corruption wasn't just mojibake, it produced stray bytes that
+  broke SQL statement quoting on re-import (a value's content could get
+  misread as a new statement, or even as one of the `mariadb` CLI's own
+  backslash meta-commands).
 - `db:push` imports with `mariadb --force` - a dump from anywhere other than
   this same app's own `db:pull` (a plain mysqldump, `ddev export-db`, ...) can
   carry a statement this connection's user can't run as-is, e.g. a view's
