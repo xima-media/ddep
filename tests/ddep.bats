@@ -36,40 +36,66 @@ setup() {
     [[ "$output" == *"Unknown argument"* ]]
 }
 
-@test "--host without a value exits 1" {
-    run "$DDEP" --host
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"--host requires a value"* ]]
-}
-
-@test "--host followed by an option is rejected" {
-    run "$DDEP" --host --debug logs
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"--host requires a value"* ]]
-}
-
-@test "--env without a value exits 1" {
-    run "$DDEP" --env
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"--env requires a value"* ]]
-}
-
 @test "a flag after the command is rejected, not silently absorbed" {
-    run "$DDEP" logs --env dwis-3442
+    run "$DDEP" logs --force
     [ "$status" -eq 1 ]
     [[ "$output" == *"flags must come before the command"* ]]
 }
 
-@test "flags before ssh parse as options, not as part of the container command" {
-    # No git repo in BATS_TEST_TMPDIR - if --host/--env parsed correctly, arg
-    # parsing succeeds and it fails later, for an unrelated reason (no git
-    # repo). If they'd been swallowed into ssh_args instead (the bug), it
-    # would fail identically - so this only distinguishes a REGRESSION back
-    # to "flags must come before the command" ever firing here, which it must not.
-    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" --host dev --env dwis-3442 ssh true'
+@test "positional host/environment after the command parse as such, not as unexpected arguments" {
+    # No git repo in BATS_TEST_TMPDIR - if host/environment parsed correctly,
+    # arg parsing succeeds and it fails later, for an unrelated reason (no git
+    # repo). Distinguishes a regression back to "flags must come before the
+    # command"/"unexpected argument(s)" ever firing here, which it must not.
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" ssh dev dwis-3442'
     [ "$status" -eq 1 ]
-    [[ "$output" != *"flags must come before the command"* ]]
+    [[ "$output" != *"unexpected argument"* ]]
     [[ "$output" == *"could not determine the project name"* ]]
+}
+
+@test "ssh rejects more than two positional arguments" {
+    run "$DDEP" ssh dev dwis-3442 extra
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"expected at most <host> <environment>"* ]]
+}
+
+@test "exec requires exactly host, environment, and command" {
+    run "$DDEP" exec dev
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"exec requires exactly <host> <environment> <command>"* ]]
+
+    run "$DDEP" exec dev dwis-3442
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"exec requires exactly <host> <environment> <command>"* ]]
+
+    run "$DDEP" exec dev dwis-3442 "echo hi" extra
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"exec requires exactly <host> <environment> <command>"* ]]
+}
+
+@test "exec with host, environment, and command parses as such, not as unexpected arguments" {
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" exec dev dwis-3442 "echo hi"'
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"unexpected argument"* ]]
+    [[ "$output" == *"could not determine the project name"* ]]
+}
+
+@test "db:pull/db:push are recognized commands, not misread as unexpected arguments" {
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" db:pull dev dwis-3442'
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"unexpected argument"* ]]
+    [[ "$output" == *"could not determine the project name"* ]]
+
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" db:push dev dwis-3442'
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"unexpected argument"* ]]
+    [[ "$output" == *"could not determine the project name"* ]]
+}
+
+@test "config rejects any positional arguments" {
+    run "$DDEP" config extra
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"config takes no arguments"* ]]
 }
 
 @test "config prints the resolved config as JSON, outside a git repo" {

@@ -20,8 +20,8 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # load_hosts_config/load_config.
 #   app <- all.vars.app_name
 #   hosts.<host_key> <- "<ansible_user>@<ansible_host>" for every host, keyed by its
-#     own hosts.yaml key (e.g. --host customer_a for one of several hosts under a
-#     "live" group), plus hosts.<dev|test|live> as a convenience default resolving
+#     own hosts.yaml key (e.g. "ddep ssh customer_a" for one of several hosts under
+#     a "live" group), plus hosts.<dev|test|live> as a convenience default resolving
 #     to the FIRST host declared under that group (file order) - not reliable for
 #     targeting one specific host once a group has more than one.
 # See .docker/hosts.yaml's format (an Ansible inventory) in
@@ -58,46 +58,57 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #   .docker/hosts.yaml must exist, declaring at least "app" and one host.
 #
 # Usage:
-#   ddep [options] <command>
+#   ddep [options] <command> [host] [environment]
 #
-#   Options must come before the command, in any order among themselves. For
-#   "ssh", everything after the command is the container command instead - see
-#   below. Every other command takes no further arguments.
+#   Options must come before the command, in any order among themselves. host
+#   and environment are positional, after the command - both optional (see
+#   below), except for "config" (takes neither) and "exec" (requires all
+#   three positional args: host, environment, and the command to run).
 #
 # Commands:
-#   media:push              Push local media files to the remote application container
-#   media:pull              Pull media files from the remote application container
-#   db:push                 Import a database dump (read from stdin) into the remote
-#                           database, then run the application's DB migration. A
-#                           gzip-compressed stream is detected and passed through;
-#                           plain SQL is gzip-compressed here before it is sent.
-#   db:pull                 Export the remote database to stdout as a gzip stream.
-#                           db.exclude_rows tables keep their schema but skip rows;
-#                           db.exclude_tables tables/views are dropped entirely.
-#   ssh [command]           Open a shell or execute a command inside the remote container
-#   logs                    Follow the remote application container's log output
-#   config                  Print the resolved configuration (built-in defaults,
-#                           .docker/hosts.yaml, and .docker/ddep.json, all
-#                           deep-merged together) as JSON
-#   info                    Print details about the remote application container as
-#                           JSON (currently just container_id; more may be added)
+#   media:push [host] [env]  Push local media files to the remote application container
+#   media:pull [host] [env]  Pull media files from the remote application container
+#   db:import [host] [env]   Import a database dump (read from stdin) into the remote
+#                             database, then run the application's DB migration. A
+#                             gzip-compressed stream is detected and passed through;
+#                             plain SQL is gzip-compressed here before it is sent.
+#   db:export [host] [env]   Export the remote database to stdout as a gzip stream.
+#                             db.exclude_rows tables keep their schema but skip rows;
+#                             db.exclude_tables tables/views are dropped entirely.
+#   db:pull [host] [env]     Local-dev convenience wrapper: db:export from the
+#                             remote, piped straight into `ddev import-db` for the
+#                             ddev project in the current working directory.
+#                             Requires ddev on PATH.
+#   db:push [host] [env]     Local-dev convenience wrapper, the reverse of
+#                             db:pull: dumps the local ddev project's database
+#                             (same db.exclude_rows/db.exclude_tables filtering
+#                             as db:export) and pipes it into db:import against
+#                             the remote. Requires ddev on PATH.
+#   ssh [host] [env]         Open an interactive shell inside the remote container
+#   exec <host> <env> <cmd>  Execute a command inside the remote container (quote
+#                             it as one argument if it contains spaces)
+#   logs [host] [env]        Follow the remote application container's log output
+#   config                   Print the resolved configuration (built-in defaults,
+#                             .docker/hosts.yaml, and .docker/ddep.json, all
+#                             deep-merged together) as JSON
+#   info [host] [env]        Print details about the remote application container as
+#                             JSON (currently just container_id; more may be added)
+#
+#   host                     Target host, from .docker/hosts.yaml. Default: dev
+#   environment              Target remote environment slug. This is the part of
+#                             the remote docker-compose project directory name
+#                             after "<project>_", e.g. "feature_xyz" for a
+#                             directory named "myproject_feature_xyz". Default:
+#                             interactively pick from the environments currently
+#                             deployed on host
 #
 # Options:
 #   -h, --help              Show usage and exit
 #   -V, --version           Show version and exit
 #   --debug                 Enable bash execution tracing
 #   --force                 Skip the confirmation prompt for destructive
-#                           operations (db:push, media:push). Required for
+#                           operations (db:import, media:push). Required for
 #                           non-interactive/CI use.
-#   --host <host>           Target host, from .docker/hosts.yaml
-#                           Default: dev
-#
-#   --env <environment>     Target remote environment slug. This is the part of the
-#                           remote docker-compose project directory name after
-#                           "<project>_", e.g. "feature_xyz" for a directory named
-#                           "myproject_feature_xyz".
-#                           Default: interactively pick from the environments
-#                           currently deployed on --host
 #
 # Configuration:
 #   Built-in defaults, deep-merged with .docker/ddep.json (optional, per-application
@@ -108,60 +119,71 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # Examples:
 #
 #   # Pull media from the test environment
-#   ddep --host test --env development media:pull
+#   ddep media:pull test development
 #
 #   # Push local media to the dev environment
-#   ddep --host dev --env feature_xyz media:push
+#   ddep media:push dev feature_xyz
 #
 #   # Open an interactive shell in the dev application container
-#   ddep --host dev ssh
+#   ddep ssh dev
 #
 #   # Execute a command inside the dev application container
-#   ddep --host dev ssh "vendor/bin/typo3 list"
+#   ddep exec dev feature_xyz "vendor/bin/typo3 list"
 #
 #   # Follow the dev application container's log output
-#   ddep --host dev logs
+#   ddep logs dev
 #
 #   # Import a database dump into the dev environment (plain SQL or gzip, both work)
-#   ddep --host dev --env feature_xyz db:push < dump.sql.gz
+#   ddep db:import dev feature_xyz < dump.sql.gz
 #
 #   # Export the dev database to a dump file (already gzip-compressed)
-#   ddep --host dev --env feature_xyz db:pull > dump.sql.gz
+#   ddep db:export dev feature_xyz > dump.sql.gz
 #
 #   # Pipe an existing dump directly into the remote database
-#   cat dump.sql.gz | ddep --host dev --env feature_xyz db:push
+#   cat dump.sql.gz | ddep db:import dev feature_xyz
+#
+#   # Pull the dev database straight into the local ddev project (requires ddev)
+#   ddep db:pull dev feature_xyz
+#
+#   # Push the local ddev project's database to the dev environment (requires ddev)
+#   ddep db:push dev feature_xyz
 #
 #   # Export a remote TYPO3 database (plain SQL) and import it locally
 #   ssh dev@vm "cd /var/www/html/typo3/current && vendor/bin/typo3 database:export" \
-#       | ddep --host dev --env branch-69 db:push
+#       | ddep db:import dev branch-69
 #
 #   # Inspect the fully resolved configuration (no git repo, host or env needed)
 #   ddep config
 #   ddep config | jq '.settings.symfony.rsync'
 #
 #   # Get the dev environment's container id (e.g. for reset-job tooling)
-#   ddep --host dev --env feature_xyz info | jq -r '.container_id'
+#   ddep info dev feature_xyz | jq -r '.container_id'
 
 # Functions
 usage() {
     cat <<'EOF'
-Usage: ddep [options] <command>
+Usage: ddep [options] <command> [host] [environment]
 
 Commands:
-  media:push   Push local media files to the remote application container
-  media:pull   Pull media files from the remote application container
-  db:push      Import a database dump (stdin, plain SQL or gzip) into the remote
-               DB, then migrate
-  db:pull      Export the remote database to stdout, gzip-compressed
-  ssh [cmd]    Open a shell, or run a command, in the remote container
-  logs         Follow the remote application container's log output
-  config       Print the resolved configuration as JSON
-  info         Print details about the remote application container as JSON
+  media:push [host] [env]  Push local media files to the remote application container
+  media:pull [host] [env]  Pull media files from the remote application container
+  db:import [host] [env]   Import a database dump (stdin, plain SQL or gzip) into
+                            the remote DB, then migrate
+  db:export [host] [env]   Export the remote database to stdout, gzip-compressed
+  db:pull [host] [env]     db:export piped into `ddev import-db` (requires ddev)
+  db:push [host] [env]     Local ddev database dump piped into db:import (requires ddev)
+  ssh [host] [env]         Open an interactive shell in the remote container
+  exec <host> <env> <cmd>  Run a command in the remote container (quote it as
+                            one argument if it contains spaces)
+  logs [host] [env]        Follow the remote application container's log output
+  config                   Print the resolved configuration as JSON
+  info [host] [env]        Print details about the remote application container as JSON
+
+  host        Target host from .docker/hosts.yaml (default: dev)
+  environment Target environment slug (default: interactive pick)
 
 Options:
-  --host <host>   Target host from .docker/hosts.yaml (default: dev)
-  --env <env>     Target environment slug (default: interactive pick)
-  --force         Skip confirmation for destructive ops (db:push, media:push)
+  --force         Skip confirmation for destructive ops (db:import, media:push)
   --debug         Enable bash execution tracing
   -h, --help      Show this help and exit
   -V, --version   Show version and exit
@@ -350,9 +372,10 @@ load_hosts_config() {
         group_hosts="$(run_yq ".all.children.${group}.hosts // {} | with_entries(.value = \"\(.value.ansible_user)@\(.value.ansible_host)\")")"
         hosts_json="$(jq --argjson gh "${group_hosts}" '. + $gh' <<< "${hosts_json}")"
 
-        # Tier-level convenience default (--host dev/test/live) - the first host
-        # in file order. Not reliable for targeting one specific host once a
-        # group has more than one - address it by its own key instead (above).
+        # Tier-level convenience default (host positional arg = dev/test/live) -
+        # the first host in file order. Not reliable for targeting one specific
+        # host once a group has more than one - address it by its own key
+        # instead (above).
         first_user="$(run_yq ".all.children.${group}.hosts // {} | to_entries | .[0].value.ansible_user // \"\"")"
         first_addr="$(run_yq ".all.children.${group}.hosts // {} | to_entries | .[0].value.ansible_host // \"\"")"
         if [[ -n "${first_user}" && -n "${first_addr}" ]]; then
@@ -548,16 +571,16 @@ get_mariadb_credentials() {
 # key auth is already assumed - see the header comment); the host-key prompt
 # is unaffected.
 #
-# -n is required: this probe otherwise inherits ddep's own stdin - for db:push,
+# -n is required: this probe otherwise inherits ddep's own stdin - for db:import,
 # that's the piped SQL dump. ssh reads/forwards stdin to set up the session even
 # for a trivial remote command like `true`, so without -n it silently consumes
 # however many bytes it buffers off the front of the dump before the connection
 # tears down (non-deterministic - depends on ssh's own timing), leaving
-# db:push's own `cat > tmpfile` (which runs much later) with a truncated,
-# mid-stream start. Confirmed as the actual cause of intermittent db:push
+# db:import's own `cat > tmpfile` (which runs much later) with a truncated,
+# mid-stream start. Confirmed as the actual cause of intermittent db:import
 # corruption that no amount of gzip/charset/binary-mode/FK-checks tuning fixed,
 # since none of those ever touched the real problem: data already missing
-# before db:push's own stdin read even began.
+# before db:import's own stdin read even began.
 ensure_ssh_host_trusted() {
     if ! ssh -n -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no "${REMOTE_DOCKER_HOST}" true; then
         echo "Error: could not establish an SSH connection to '${REMOTE_DOCKER_HOST}' (host '${host}') - see ssh's own error above. A host key verification failure specifically (not a connection/auth failure) means the key on record for this host has changed - confirm with whoever manages it before proceeding, rather than removing the stale known_hosts entry yourself." >&2
@@ -640,10 +663,11 @@ select_env() {
     fi
 
     # The picker reads from the controlling terminal (not stdin, which may be a
-    # pipe, e.g. db:push). Without a terminal (CI), --env must be given explicitly.
+    # pipe, e.g. db:import). Without a terminal (CI), environment must be given
+    # explicitly.
     if [[ ! -r /dev/tty ]]; then
-        echo "Error: no --env given and no terminal available to choose one." >&2
-        echo "       Pass --env <environment> explicitly." >&2
+        echo "Error: no environment given and no terminal available to choose one." >&2
+        echo "       Pass it explicitly: ddep ${command} ${host} <environment>." >&2
         exit 1
     fi
 
@@ -663,7 +687,7 @@ select_env() {
 confirm_destructive() {
     # $1 = human-readable description of the destructive action.
     # Confirmation is read from the controlling terminal (/dev/tty), not stdin,
-    # because db:push consumes stdin. Non-dev hosts require typing the host slug
+    # because db:import consumes stdin. Non-dev hosts require typing the host slug
     # for extra safety; non-interactive runs (CI, no TTY) must pass --force.
     local action="$1"
     local expected="yes"
@@ -698,7 +722,7 @@ confirm_destructive() {
 # Resolves a set of exclude_rows/exclude_tables regex patterns (JSON array,
 # already loaded into a bash array by the caller) against the remote database's
 # actual table/view names, appending "--ignore-table=db.name" for each match
-# into the nameref array. Separate from db:pull's structure/data dump calls so
+# into the nameref array. Separate from db:export's structure/data dump calls so
 # exclude_rows and exclude_tables can each be resolved to their own args and
 # applied to different halves of the dump.
 resolve_ignore_table_args() {
@@ -738,6 +762,41 @@ resolve_ignore_table_args() {
     done
 }
 
+# Local counterpart to resolve_ignore_table_args, for db:push: resolves
+# exclude_rows/exclude_tables regex patterns against ddev's own local db
+# container instead of a remote host reached over SSH. ASSUMPTIONS THAT NEED
+# VERIFYING AGAINST YOUR OWN ddev SETUP (not tested against a live ddev
+# project - unlike the remote side, there is no equivalent real-instance test
+# for this): ddev's db container's fixed, documented default root credentials
+# (root/root) work unauthenticated for this query; "mysql" is present in the
+# container regardless of whether the project is configured for MySQL or
+# MariaDB (both ship it for compatibility); the database name is "db" (ddev's
+# own fixed default, not project-specific).
+resolve_local_ignore_table_args() {
+    local -n _local_patterns=$1
+    local -n _local_ignore_args=$2
+
+    if [ "${#_local_patterns[@]}" -eq 0 ]; then
+        return 0
+    fi
+
+    local regex
+    regex=$(IFS="|"; echo "${_local_patterns[*]}")
+
+    local tables
+    tables=$(ddev exec -s db -- mysql -uroot -proot -N -e "
+        SELECT TABLE_NAME
+        FROM information_schema.tables
+        WHERE table_schema='db'
+        AND TABLE_NAME REGEXP '${regex}';
+        ")
+
+    local table
+    for table in ${tables}; do
+        _local_ignore_args+=( "--ignore-table=db.${table}" )
+    done
+}
+
 # Allow sourcing (e.g. from tests) to load the functions above without running
 # the CLI below.
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
@@ -747,8 +806,9 @@ fi
 # Main script execution
 command=""
 host=""
+target_env=""
+exec_command=""
 tmpfile=""
-ssh_args=()
 FORCE=false
 
 # Populated via namerefs by get_container_id and get_mariadb_credentials.
@@ -771,11 +831,9 @@ trap cleanup EXIT
 
 # Flags always precede the command - the loop stops as soon as one is matched
 # (condition below, not a per-case check), so a flag typo'd or placed after the
-# command is never silently absorbed as part of it. For "ssh" specifically,
-# everything left after the command is the container command, verbatim (as
-# with "ssh host <cmd>") - quote one containing spaces as a single string. For
-# every other command, anything left over is a real error (see below) - none
-# of them take positional args.
+# command is never silently absorbed as part of it, and any leftover token that
+# looks like a flag (see below) is rejected the same way instead of being
+# misread as a host/environment/command value.
 while [[ $# -gt 0 && -z "${command}" ]]; do
     case "$1" in
         -h|--help)
@@ -790,27 +848,11 @@ while [[ $# -gt 0 && -z "${command}" ]]; do
             DEBUG=true
             shift
             ;;
-        --host)
-            if [[ $# -lt 2 || "$2" == -* ]]; then
-                echo "Error: --host requires a value" >&2
-                exit 1
-            fi
-            host="$2"
-            shift 2
-            ;;
-        --env)
-            if [[ $# -lt 2 || "$2" == -* ]]; then
-                echo "Error: --env requires a value" >&2
-                exit 1
-            fi
-            target_env="$2"
-            shift 2
-            ;;
         --force)
             FORCE=true
             shift
             ;;
-        media:push|media:pull|db:push|db:pull|logs|config|info|ssh)
+        media:push|media:pull|db:import|db:export|db:push|db:pull|logs|config|info|ssh|exec)
             command="$1"
             shift
             ;;
@@ -821,16 +863,56 @@ while [[ $# -gt 0 && -z "${command}" ]]; do
     esac
 done
 if [ -z "${command}" ]; then
-    echo "No command provided. Use one of: media:push, media:pull, ssh, db:push, db:pull, logs, config, info" >&2
+    echo "No command provided. Use one of: media:push, media:pull, ssh, exec, db:import, db:export, db:push, db:pull, logs, config, info" >&2
     exit 1
 fi
 
-if [[ "${command}" == "ssh" ]]; then
-    ssh_args=("$@")
-elif [[ $# -gt 0 ]]; then
-    echo "Error: unexpected argument(s) after '${command}': $* - flags must come before the command." >&2
-    exit 1
-fi
+for _remaining_arg in "$@"; do
+    if [[ "${_remaining_arg}" == -* ]]; then
+        echo "Error: unexpected argument(s) after '${command}': $* - flags must come before the command." >&2
+        exit 1
+    fi
+done
+unset _remaining_arg
+
+# host/environment are positional, after the command: "ddep <command> [host]
+# [environment]". Both stay optional - host defaults to "dev" below,
+# environment falls back to the interactive picker (select_env) further down
+# if still empty - so "ddep logs", "ddep logs dev", and "ddep logs dev main"
+# all work, just increasingly explicit.
+#
+# "config" takes neither (it never touches a remote host). "exec" requires
+# all three (host, environment, and the remote command to run) since,
+# unlike every other command, it has a third positional slot - making host/
+# environment optional there would make "ddep exec ls" ambiguous between
+# "host=ls" and "command=ls with default host/environment". "ssh" opens an
+# interactive shell only and never takes a command at all (see "exec" for
+# that) - the ambiguity above is exactly why the two are separate commands.
+case "${command}" in
+    config)
+        if [[ $# -gt 0 ]]; then
+            echo "Error: unexpected argument(s) after 'config': $* - config takes no arguments." >&2
+            exit 1
+        fi
+        ;;
+    exec)
+        if [[ $# -ne 3 ]]; then
+            echo "Error: exec requires exactly <host> <environment> <command> (quote the command as one argument if it contains spaces)." >&2
+            exit 1
+        fi
+        host="$1"
+        target_env="$2"
+        exec_command="$3"
+        ;;
+    *)
+        if [[ $# -gt 2 ]]; then
+            echo "Error: unexpected argument(s) after '${command}': $* - expected at most <host> <environment>." >&2
+            exit 1
+        fi
+        [[ $# -ge 1 ]] && host="$1"
+        [[ $# -ge 2 ]] && target_env="$2"
+        ;;
+esac
 
 check_requirements
 
@@ -915,13 +997,19 @@ elif [ "${command}" = "ssh" ]; then
     if [ -t 0 ] && [ -t 1 ]; then
         exec_flags="-it"
     fi
-    if [ "${#ssh_args[@]}" -gt 0 ]; then
-        # "${ssh_args[*]}" joins the arguments with a space into one command line
-        # for the container shell to parse (ssh-style); no args opens a shell.
-        docker exec "${exec_flags}" "${container_id}" /bin/bash -c "${ssh_args[*]}"
-    else
-        docker exec "${exec_flags}" "${container_id}" /bin/bash
+    docker exec "${exec_flags}" "${container_id}" /bin/bash
+
+elif [ "${command}" = "exec" ]; then
+    if ! get_container_id container_id; then
+        exit 1
     fi
+    # Only allocate a TTY (-t) when running interactively; in CI/pipes -t fails
+    # with "the input device is not a TTY".
+    exec_flags="-i"
+    if [ -t 0 ] && [ -t 1 ]; then
+        exec_flags="-it"
+    fi
+    docker exec "${exec_flags}" "${container_id}" /bin/bash -c "${exec_command}"
 
 elif [ "${command}" = "logs" ]; then
     if ! get_container_id container_id; then
@@ -935,10 +1023,10 @@ elif [ "${command}" = "info" ]; then
     fi
     jq -n --arg container_id "${container_id}" '{container_id: $container_id}'
 
-elif [ "${command}" = "db:push" ]; then
+elif [ "${command}" = "db:import" ]; then
     if [ -t 0 ]; then
-        echo "Error: db:push reads the SQL dump (plain or gzip) from stdin; pipe one in, e.g.:" >&2
-        echo "       ddep --host dev db:push < dump.sql.gz" >&2
+        echo "Error: db:import reads the SQL dump (plain or gzip) from stdin; pipe one in, e.g.:" >&2
+        echo "       ddep db:import dev < dump.sql.gz" >&2
         exit 1
     fi
 
@@ -946,7 +1034,7 @@ elif [ "${command}" = "db:push" ]; then
     tmpfile=$(mktemp)
     cat > "${tmpfile}"
 
-    # ddep db:pull emits a gzip stream (its two dumps concatenated as a
+    # ddep db:export emits a gzip stream (its two dumps concatenated as a
     # multi-member gzip stream); detect that by magic byte so a plain-SQL dump
     # piped in some other way (e.g. a raw mysqldump/TYPO3 export) still works,
     # by compressing it here instead. Either way, the file that crosses the
@@ -959,7 +1047,7 @@ elif [ "${command}" = "db:push" ]; then
     # gzip always writes a header, so empty stdin yields a valid-but-empty archive;
     # verify the decompressed stream actually contains data before proceeding.
     if [ -z "$(gunzip -c "${tmpfile}" | head -c1)" ]; then
-        echo "Error: no data received on stdin; aborting db:push." >&2
+        echo "Error: no data received on stdin; aborting db:import." >&2
         exit 1
     fi
 
@@ -975,7 +1063,7 @@ elif [ "${command}" = "db:push" ]; then
     # (set -x) never echoes the password; it stays scoped to the mariadb run and
     # is still forwarded via -e (not -p), so it never appears in argv either.
     #
-    # --force: a dump from anywhere other than this same app's own db:pull (a
+    # --force: a dump from anywhere other than this same app's own db:export (a
     # plain mysqldump, ddev export-db, ...) can contain statements this
     # connection's user can't run as-is - e.g. a view's CREATE carrying a
     # DEFINER from wherever it was dumped, which fails with "Access denied;
@@ -1012,7 +1100,7 @@ elif [ "${command}" = "db:push" ]; then
         echo "Warning: skipping migration - see above" >&2
     fi
 
-elif [ "${command}" = "db:pull" ]; then
+elif [ "${command}" = "db:export" ]; then
     get_mariadb_credentials db_host db_name db_user db_password db_port
     ensure_mariadb_image
 
@@ -1027,7 +1115,7 @@ elif [ "${command}" = "db:pull" ]; then
         "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}"
 
     # --default-character-set=utf8mb4 on every mariadb/mariadb-dump call (here and in
-    # db:push below): without it, the client library's own default (latin1) silently
+    # db:import below): without it, the client library's own default (latin1) silently
     # mangles multi-byte UTF-8 content on the way through - confirmed against a real
     # dump containing German typographic quotes, which corrupted into stray bytes that
     # broke SQL statement quoting entirely (not just mojibake) once re-imported.
@@ -1050,4 +1138,53 @@ elif [ "${command}" = "db:pull" ]; then
             sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
             sh "${db_host}" "${db_port}" "${db_user}" "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
     )
+
+elif [ "${command}" = "db:pull" ]; then
+    # A thin local-dev convenience wrapper: db:export from the remote (host/
+    # target_env are already resolved above, interactively if needed - passed
+    # through explicitly so the child process doesn't prompt a second time),
+    # decompressed and handed to ddev's own importer for the local project in
+    # the current working directory.
+    if ! command -v ddev >/dev/null 2>&1; then
+        echo "Error: db:pull requires ddev on PATH (only db:export does not)." >&2
+        exit 1
+    fi
+    "$0" db:export "${host}" "${target_env}" | gzip -dc | ddev import-db
+
+elif [ "${command}" = "db:push" ]; then
+    # A thin local-dev convenience wrapper, the reverse of db:pull: dumps the
+    # local ddev project's database directly from its db container - bypassing
+    # `ddev export-db`, which has no way to skip specific tables - applying
+    # this project's own exclude_rows/exclude_tables (same semantics as
+    # db:export: rows-only vs. dropped entirely), then pipes the result into
+    # db:import against the remote host/environment. --force/--debug are
+    # forwarded to that child invocation (which is what actually prompts for
+    # confirmation), not consumed here.
+    #
+    # See resolve_local_ignore_table_args's own comment for the ddev-specific
+    # assumptions (root/root credentials, mysql binary, "db" database name)
+    # this relies on - unverified against a live ddev project.
+    if ! command -v ddev >/dev/null 2>&1; then
+        echo "Error: db:push requires ddev on PATH (only db:import does not)." >&2
+        exit 1
+    fi
+
+    rows_ignore_args=()
+    resolve_local_ignore_table_args DB_EXCLUDE_ROWS rows_ignore_args
+
+    tables_ignore_args=()
+    resolve_local_ignore_table_args DB_EXCLUDE_TABLES tables_ignore_args
+
+    import_args=()
+    [[ "${FORCE}" == "true" ]] && import_args+=("--force")
+    [[ "${DEBUG}" == "true" ]] && import_args+=("--debug")
+    import_args+=("db:import" "${host}" "${target_env}")
+
+    (
+        ddev exec -s db -- sh -c 'mysqldump -uroot -proot --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
+            sh "${tables_ignore_args[@]}" db
+
+        ddev exec -s db -- sh -c 'mysqldump -uroot -proot --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
+            sh "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" db
+    ) | gzip -dc | "$0" "${import_args[@]}"
 fi

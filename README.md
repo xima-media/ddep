@@ -54,7 +54,7 @@ to the pinned binary (runs on the host, where docker/ssh/agent already live):
 #!/usr/bin/env bash
 
 ## Description: Run ddep against a remote environment
-## Usage: ddep [options] <command>
+## Usage: ddep [options] <command> [host] [environment]
 
 exec "${DDEV_APPROOT}/vendor/bin/ddep" "$@"
 ```
@@ -102,14 +102,14 @@ every app - see [Security](#security). `ddep` derives its own connection info
 from this file:
 
 - `app` ← `all.vars.app_name`
-- every host is addressable by its own hosts.yaml key as `--host <key>` —
-  e.g. `--host customer_a` for one of several hosts under a `live` group
+- every host is addressable by its own hosts.yaml key as the `host` argument —
+  e.g. `ddep ssh customer_a` for one of several hosts under a `live` group
   (`all.children.live.hosts.customer_a`, `.customer_b`, ...)
-- `--host dev`/`test`/`live` also work as a convenience default, resolving to
+- `dev`/`test`/`live` also work as a convenience default, resolving to
   the **first** host declared under that group, in file order. Reliable only
   for a genuinely single-host group — once a group has more than one host,
   address the one you mean by its own key instead (see above); which host
-  `--host live` happens to mean on a multi-host group is an implementation
+  `live` happens to mean on a multi-host group is an implementation
   detail (file order), not something to rely on.
 
 This is the **only** place `app`, host connection info, and
@@ -183,7 +183,7 @@ from there.
 (default `/var/www/html/app/public`); override it if your image lays out the
 document root differently.
 
-For example, to replace the built-in `db:pull` table-exclude lists for `symfony`:
+For example, to replace the built-in `db:export` table-exclude lists for `symfony`:
 
 ```json
 {
@@ -209,13 +209,13 @@ table you still want excluded, not just the ones you're adding — each of
 `exclude_rows`/`exclude_tables` replaces independently, so overriding one
 doesn't affect the other.
 
-`db:pull` supports two, independent kinds of table exclusion:
+`db:export` supports two, independent kinds of table exclusion:
 
 - `exclude_rows` — schema kept, only rows are skipped. Use this for live,
   per-environment state the application's schema still manages (e.g. a
-  `sessions` table) — an empty table survives a `db:push` even on a brand-new
+  `sessions` table) — an empty table survives a `db:import` even on a brand-new
   environment, without depending on a migration to recreate it.
-- `exclude_tables` — dropped entirely, structure and data both. `db:pull`
+- `exclude_tables` — dropped entirely, structure and data both. `db:export`
   doesn't dump it at all, and nothing recreates it afterward: `db.migration`
   (`database:updateschema` for typo3, `doctrine:migrations:migrate` for
   symfony) only replays committed migration *files* — if the table/view was
@@ -240,39 +240,44 @@ doesn't affect the other.
 
 | Command | Description |
 |---------|--------------|
-| `media:push` | Push local media files to the remote application container |
-| `media:pull` | Pull media files from the remote application container |
-| `db:push` | Import a database dump (read from stdin, plain SQL or gzip) into the remote database, then run the application's DB migration |
-| `db:pull` | Export the remote database to stdout, gzip-compressed |
-| `ssh [command]` | Open a shell, or execute a command, inside the remote container |
-| `logs` | Follow the remote application container's log output |
-| `config` | Print the resolved configuration (built-in defaults, `.docker/hosts.yaml`, and `.docker/ddep.json`, all deep-merged together) as JSON |
-| `info` | Print details about the remote application container as JSON (currently just `container_id`; more may be added) |
+| `media:push [host] [env]` | Push local media files to the remote application container |
+| `media:pull [host] [env]` | Pull media files from the remote application container |
+| `db:import [host] [env]` | Import a database dump (read from stdin, plain SQL or gzip) into the remote database, then run the application's DB migration |
+| `db:export [host] [env]` | Export the remote database to stdout, gzip-compressed |
+| `db:pull [host] [env]` | Local-dev convenience wrapper: `db:export` piped into `ddev import-db` for the ddev project in the current working directory. Requires `ddev` on `PATH` |
+| `db:push [host] [env]` | Local-dev convenience wrapper, the reverse of `db:pull`: dumps the local ddev project's database (same `exclude_rows`/`exclude_tables` filtering as `db:export`) and pipes it into `db:import`. Requires `ddev` on `PATH` |
+| `ssh [host] [env]` | Open an interactive shell inside the remote container |
+| `exec <host> <env> <cmd>` | Execute a command inside the remote container - all three are required, and `cmd` should be quoted as one argument if it contains spaces |
+| `logs [host] [env]` | Follow the remote application container's log output |
+| `config` | Print the resolved configuration (built-in defaults, `.docker/hosts.yaml`, and `.docker/ddep.json`, all deep-merged together) as JSON - takes no arguments |
+| `info [host] [env]` | Print details about the remote application container as JSON (currently just `container_id`; more may be added) |
 
-`db:push` and `media:push` overwrite data in the remote environment and ask for
+`host` and `environment` are positional, after the command, and stay optional
+for every command except `exec` (see above) and `config` (takes neither):
+`host` defaults to `dev`; `environment`, if omitted, is picked interactively
+from the environments currently deployed on `host`.
+
+`db:import` and `media:push` overwrite data in the remote environment and ask for
 confirmation before running. On non-`dev` hosts you must type the host slug to
 proceed; pass `--force` to skip the prompt (required in CI, where there is no
 terminal).
 
-`db:pull`/`db:push` compress the dump *before* it crosses the SSH-tunnelled
+`db:export`/`db:import` compress the dump *before* it crosses the SSH-tunnelled
 Docker connection (`mariadb-dump | gzip` runs inside the remote container, and
-`db:push` sends the compressed bytes as-is and `gunzip`s them inside the
+`db:import` sends the compressed bytes as-is and `gunzip`s them inside the
 container too), not just at rest — meaningfully faster for large databases
-over a slow or distant link. `db:push` also accepts plain, uncompressed SQL on
+over a slow or distant link. `db:import` also accepts plain, uncompressed SQL on
 stdin (detected automatically) for backward compatibility.
 
 ## Options
 
-Options must come before the command, in any order among themselves. For `ssh`,
-everything after the command is the container command instead of an option -
-see [Commands](#commands) above. Every other command takes no further arguments.
+Options must always come before the command - `host`/`environment`/`cmd` are
+positional, after the command, not flags (see [Commands](#commands) above).
 
 | Option | Description |
 |--------|--------------|
 | `--debug` | Enable bash execution tracing |
-| `--force` | Skip the confirmation prompt for destructive operations (`db:push`, `media:push`). Required for non-interactive/CI use |
-| `--host <host>` | Target host, from `.docker/hosts.yaml`. Default: `dev` |
-| `--env <environment>` | Remote environment slug — the part of the remote docker-compose project directory name after `<project>_`. Default: interactively pick from the environments currently deployed on `--host` |
+| `--force` | Skip the confirmation prompt for destructive operations (`db:import`, `media:push`). Required for non-interactive/CI use |
 | `-h`, `--help` | Show usage and exit |
 | `-V`, `--version` | Show version and exit |
 
@@ -280,35 +285,41 @@ see [Commands](#commands) above. Every other command takes no further arguments.
 
 ```sh
 # Pull media from the test environment
-ddep --host test --env development media:pull
+ddep media:pull test development
 
 # Push local media to the dev environment
-ddep --host dev --env feature_xyz media:push
+ddep media:push dev feature_xyz
 
 # Open an interactive shell in the dev application container
-ddep --host dev ssh
+ddep ssh dev
 
 # Execute a command inside the dev application container
-ddep --host dev ssh "vendor/bin/typo3 list"
+ddep exec dev feature_xyz "vendor/bin/typo3 list"
 
 # Follow the dev application container's log output
-ddep --host dev logs
+ddep logs dev
 
 # Import a database dump into the dev environment (plain SQL or gzip, both work)
-ddep --host dev --env feature_xyz db:push < dump.sql.gz
+ddep db:import dev feature_xyz < dump.sql.gz
 
 # Export the dev database to a dump file (already gzip-compressed)
-ddep --host dev --env feature_xyz db:pull > dump.sql.gz
+ddep db:export dev feature_xyz > dump.sql.gz
 
 # Pipe an existing dump directly into the remote database
-cat dump.sql.gz | ddep --host dev --env feature_xyz db:push
+cat dump.sql.gz | ddep db:import dev feature_xyz
+
+# Pull the dev database straight into the local ddev project (requires ddev)
+ddep db:pull dev feature_xyz
+
+# Push the local ddev project's database to the dev environment (requires ddev)
+ddep db:push dev feature_xyz
 
 # Inspect the fully resolved configuration (no git repo, host or env needed)
 ddep config
 ddep config | jq '.settings.symfony.rsync'
 
 # Get the dev environment's container id (e.g. for reset-job tooling)
-ddep --host dev --env feature_xyz info | jq -r '.container_id'
+ddep info dev feature_xyz | jq -r '.container_id'
 ```
 
 ## Security
@@ -327,7 +338,7 @@ Weigh this before rolling it out:
 - **Reduce blast radius.** Consider fronting the daemon with a
   [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) that
   exposes only the API endpoints ddep needs, or rootless Docker on the host.
-- **`db:push`/`media:push` overwrite remote data.** They prompt for confirmation
+- **`db:import`/`media:push` overwrite remote data.** They prompt for confirmation
   (type the host slug on non-`dev` hosts); `--force` bypasses that, so treat
   `--force` against a non-`dev` host as a privileged operation.
 - **Secrets stay off the command line and out of traces.** The database password
@@ -342,16 +353,16 @@ ddep runs in CI as long as you account for the lack of a terminal:
 
 - **Provide SSH access.** The runner needs the private key and the host in its
   `known_hosts` so the `ssh://` Docker connection authenticates non-interactively.
-- **Always pass `--env`.** Without a TTY there is no interactive environment
-  picker; ddep exits with an error asking for it.
-- **Pass `--force` for `db:push`/`media:push`.** The confirmation prompt cannot
+- **Always pass environment explicitly.** Without a TTY there is no interactive
+  environment picker; ddep exits with an error asking for it.
+- **Pass `--force` for `db:import`/`media:push`.** The confirmation prompt cannot
   be answered without a terminal.
 - **Exit codes are reliable.** A successful command returns `0` and any failure
   returns non-zero, so `ddep … && next-step` and pipeline gating behave.
 
 ```sh
 # Refresh a staging database non-interactively
-ddep --host test --env staging --force db:push < dump.sql.gz
+ddep --force db:import test staging < dump.sql.gz
 ```
 
 ## Troubleshooting
@@ -362,6 +373,6 @@ ddep --host test --env staging --force db:push < dump.sql.gz
 | `required command(s) not found on PATH: …` | Install the missing tool(s) (`jq`, `docker`, `rsync`, `ssh`, `gzip`, `git`). |
 | `docker: command not found` when run via `ddev exec` | The ddev web container has no docker client. Run ddep on the **host** (where docker, ssh, and your agent live), not inside the container. |
 | `could not determine the project name` | Run ddep from inside the project's git working copy; it needs an `origin` remote. |
-| `host '…' is not configured` | The `--host` slug/key isn't declared anywhere under `all.children.*.hosts` in `.docker/hosts.yaml` (ddep.json's own `hosts`, if it has one, is ignored - see Setup). Run `ddep config \| jq .hosts` to see every currently resolvable value. |
-| `No container found for project '…' and environment '…'` | Wrong `--env`, the stack isn't running, or `compose_projects_root`/compose labels don't match. |
-| `no --env given and no terminal available` | Non-interactive run (CI/pipe) with no `--env`; pass it explicitly. |
+| `host '…' is not configured` | The host argument isn't declared anywhere under `all.children.*.hosts` in `.docker/hosts.yaml` (ddep.json's own `hosts`, if it has one, is ignored - see Setup). Run `ddep config \| jq .hosts` to see every currently resolvable value. |
+| `No container found for project '…' and environment '…'` | Wrong environment, the stack isn't running, or `compose_projects_root`/compose labels don't match. |
+| `no environment given and no terminal available` | Non-interactive run (CI/pipe) with no environment argument; pass it explicitly. |
