@@ -485,10 +485,14 @@ parse_config_json() {
 
 
     # Database table exclusions: exclude_rows keeps schema, skips rows only;
-    # exclude_tables drops the table/view entirely.
+    # exclude_tables drops the table/view entirely. Both are only ever read via
+    # resolve_ignore_table_args's nameref (passed by name, not $expansion) -
+    # static analysis can't trace that across the function boundary.
+    # shellcheck disable=SC2034
     mapfile -t DB_EXCLUDE_ROWS < <(
         jq -r "(${APP_CONFIG}.db.exclude_rows // []) | .[]" "${CONFIG_FILE}"
     )
+    # shellcheck disable=SC2034
     mapfile -t DB_EXCLUDE_TABLES < <(
         jq -r "(${APP_CONFIG}.db.exclude_tables // []) | .[]" "${CONFIG_FILE}"
     )
