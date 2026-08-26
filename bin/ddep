@@ -33,11 +33,17 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #   "settings": {                                     # optional, per-application overrides
 #     "symfony": {
 #       "db": {
-#         "exclude_tables": ["^sessions$", "^v_media_references_info$"]
+#         "exclude_rows": ["^sessions$"],
+#         "exclude_tables": ["^v_media_references_info$"]
 #       }
 #     }
 #   }
 # }
+# db.exclude_rows: schema kept, only rows are skipped - for live per-environment
+#   state (e.g. sessions) that the app's own schema still manages.
+# db.exclude_tables: dropped entirely, structure and data both - for tables/views
+#   that shouldn't exist in the dump at all (e.g. one exposing a DEFINER tied to
+#   its origin server).
 # A ddep.json still setting "app"/"hosts" (the pre-hosts.yaml schema) has both
 # ignored, with a warning - see load_config.
 
@@ -66,10 +72,8 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #                           gzip-compressed stream is detected and passed through;
 #                           plain SQL is gzip-compressed here before it is sent.
 #   db:pull                 Export the remote database to stdout as a gzip stream.
-#                           Tables matching db.exclude_tables are dumped
-#                           structure-only (no rows), so they still exist after a
-#                           db:push, even on a brand-new environment that never
-#                           had them before.
+#                           db.exclude_rows tables keep their schema but skip rows;
+#                           db.exclude_tables tables/views are dropped entirely.
 #   ssh [command]           Open a shell or execute a command inside the remote container
 #   logs                    Follow the remote application container's log output
 #   config                  Print the resolved configuration (built-in defaults,
@@ -190,7 +194,7 @@ load_default_config() {
     "typo3": {
       "db": {
         "migration": "/usr/bin/php vendor/bin/typo3 database:updateschema --no-interaction --quiet",
-        "exclude_tables": [
+        "exclude_rows": [
           "^cf_.*",
           "^cache_.*",
           "^be_sessions$",
@@ -247,7 +251,7 @@ load_default_config() {
     "symfony": {
       "db": {
         "migration": "/usr/bin/php bin/console doctrine:migrations:migrate --no-interaction --quiet",
-        "exclude_tables": [
+        "exclude_rows": [
           "^sessions$"
         ]
       },
@@ -480,7 +484,11 @@ parse_config_json() {
     )
 
 
-    # Database table exclusions
+    # Database table exclusions: exclude_rows keeps schema, skips rows only;
+    # exclude_tables drops the table/view entirely.
+    mapfile -t DB_EXCLUDE_ROWS < <(
+        jq -r "(${APP_CONFIG}.db.exclude_rows // []) | .[]" "${CONFIG_FILE}"
+    )
     mapfile -t DB_EXCLUDE_TABLES < <(
         jq -r "(${APP_CONFIG}.db.exclude_tables // []) | .[]" "${CONFIG_FILE}"
     )
@@ -681,6 +689,49 @@ confirm_destructive() {
         echo "Aborted." >&2
         exit 1
     fi
+}
+
+# Resolves a set of exclude_rows/exclude_tables regex patterns (JSON array,
+# already loaded into a bash array by the caller) against the remote database's
+# actual table/view names, appending "--ignore-table=db.name" for each match
+# into the nameref array. Separate from db:pull's structure/data dump calls so
+# exclude_rows and exclude_tables can each be resolved to their own args and
+# applied to different halves of the dump.
+resolve_ignore_table_args() {
+    local -n _patterns=$1
+    local -n _ignore_args=$2
+    local db_host="$3" db_port="$4" db_user="$5" db_password="$6" db_name="$7"
+
+    if [ "${#_patterns[@]}" -eq 0 ]; then
+        return 0
+    fi
+
+    # Convert JSON regex array into MariaDB REGEXP expression
+    local regex
+    regex=$(IFS="|"; echo "${_patterns[*]}")
+
+    # MYSQL_PWD is exported with tracing disabled so --debug never echoes it,
+    # and forwarded via -e (not -p) so it never appears in argv either.
+    local tables
+    tables=$(
+        { set +x; } 2>/dev/null
+        export MYSQL_PWD="${db_password}"
+        docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+        sh -c "mariadb \
+            --host '${db_host}' \
+            --port '${db_port}' \
+            --user '${db_user}' \
+            -N -e \"
+            SELECT TABLE_NAME
+            FROM information_schema.tables
+            WHERE table_schema='${db_name}'
+            AND TABLE_NAME REGEXP '${regex}';
+            \"")
+
+    local table
+    for table in ${tables}; do
+        _ignore_args+=( "--ignore-table=${db_name}.${table}" )
+    done
 }
 
 # Allow sourcing (e.g. from tests) to load the functions above without running
@@ -927,8 +978,8 @@ elif [ "${command}" = "db:push" ]; then
     # you need ... SET USER ... privilege" for any other user (confirmed
     # against a real run). Without --force, mariadb aborts the whole import on
     # that first error, so the migration below - which is what actually
-    # re-creates such a view correctly (db.migration, a run_after_sync-style
-    # script) - never even runs. --force logs the failing statement and moves
+    # re-creates such a view correctly (db.migration, chained with a raw-SQL
+    # step) - never even runs. --force logs the failing statement and moves
     # on instead, importing everything else; confirmed it also exits 0
     # (not just continuing past the error, but not failing this whole
     # subshell either), so it doesn't trip this script's own set -e before
@@ -961,33 +1012,15 @@ elif [ "${command}" = "db:pull" ]; then
     get_mariadb_credentials db_host db_name db_user db_password db_port
     ensure_mariadb_image
 
-    ignore_args=()
+    # exclude_rows: schema kept, only rows skipped - applied to the data dump only.
+    # exclude_tables: dropped entirely - applied to both the structure and data dump.
+    rows_ignore_args=()
+    resolve_ignore_table_args DB_EXCLUDE_ROWS rows_ignore_args \
+        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}"
 
-    if [ "${#DB_EXCLUDE_TABLES[@]}" -gt 0 ]; then
-        # Convert JSON regex array into MariaDB REGEXP expression
-        regex=$(IFS="|"; echo "${DB_EXCLUDE_TABLES[*]}")
-
-        # MYSQL_PWD is exported with tracing disabled so --debug never echoes it,
-        # and forwarded via -e (not -p) so it never appears in argv either.
-        tables=$(
-            { set +x; } 2>/dev/null
-            export MYSQL_PWD="${db_password}"
-            docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c "mariadb \
-                --host '${db_host}' \
-                --port '${db_port}' \
-                --user '${db_user}' \
-                -N -e \"
-                SELECT TABLE_NAME
-                FROM information_schema.tables
-                WHERE table_schema='${db_name}'
-                AND TABLE_NAME REGEXP '${regex}';
-                \"")
-
-        for table in ${tables}; do
-            ignore_args+=( "--ignore-table=${db_name}.${table}" )
-        done
-    fi
+    tables_ignore_args=()
+    resolve_ignore_table_args DB_EXCLUDE_TABLES tables_ignore_args \
+        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}"
 
     # --default-character-set=utf8mb4 on every mariadb/mariadb-dump call (here and in
     # db:push below): without it, the client library's own default (latin1) silently
@@ -999,10 +1032,6 @@ elif [ "${command}" = "db:pull" ]; then
     # container before it crosses the SSH-tunnelled Docker connection, then
     # concatenated into one multi-member gzip stream on stdout (gunzip handles
     # concatenated gzip members transparently, decompressing back-to-back).
-    # The structure half covers every table, INCLUDING ones in exclude_tables, so
-    # an excluded table (e.g. a sessions table) still exists — with the correct,
-    # empty schema — after a db:push, even on a brand-new environment that never
-    # had it. Only its rows are skipped, by the data half below.
     # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
     # never echoes it, and forwarded via -e (not -p) so it never appears in argv.
     (
@@ -1010,11 +1039,11 @@ elif [ "${command}" = "db:pull" ]; then
         export MYSQL_PWD="${db_password}"
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'mariadb-dump --default-character-set=utf8mb4 --host="$1" --port="$2" --user="$3" --single-transaction --skip-lock-tables --no-data "$4" | gzip' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${db_name}"
+            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
+            sh "${db_host}" "${db_port}" "${db_user}" "${tables_ignore_args[@]}" "${db_name}"
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
             sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${ignore_args[@]}" "${db_name}"
+            sh "${db_host}" "${db_port}" "${db_user}" "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
     )
 fi

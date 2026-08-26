@@ -25,9 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Without `--force`, that error aborted the whole import before the
   post-import migration (which is what actually re-creates such a view
   correctly) ever ran.
-- `db:pull` now excludes matching `exclude_tables` only from the data export; the
-  structure export retains full table and view definitions (including excluded
-  ones).
+- `db:pull`'s table exclusion is now split into two independent settings:
+  `exclude_rows` (schema kept, only rows skipped - the old `exclude_tables`
+  behavior, for live per-environment state like `sessions` that the app's own
+  migration doesn't necessarily recreate) and `exclude_tables` (dropped
+  entirely, structure and data both - for a table/view that shouldn't exist
+  outside its origin environment at all, e.g. one whose `CREATE VIEW` carries
+  a `DEFINER` tied to that server). The built-in defaults for both apps moved
+  from `exclude_tables` to `exclude_rows`, since none of them need full
+  removal by default.
 - **Breaking:** flags must now come before the command (e.g. `ddep --host dev
   --env x db:push`, not `ddep db:push --env x`) - previously `ssh` silently
   swallowed any flags placed after it into the remote command instead of

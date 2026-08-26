@@ -229,7 +229,7 @@ _run_get_container_id() {
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = "11.4" ]                 # scalar override applied
     [ "${lines[1]}" = "/opt/docker/compose" ] # hosts.yaml's own value, untouched by local.json
-    [ "${lines[2]}" = "2" ]                    # array replaced, not appended (default had 1)
+    [ "${lines[2]}" = "2" ]                    # array replaced, not appended (default had 0)
     [ "${lines[3]}" = "^only_this$" ]          # replaced with local content
     [ "${lines[4]}" = "true" ]                 # sibling default (migration) preserved
     [ "${lines[5]}" = "object" ]               # unrelated app (typo3) preserved

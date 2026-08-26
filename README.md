@@ -139,7 +139,8 @@ setting overrides, `mariadb_version` — can optionally be set in
   "settings": {
     "symfony": {
       "db": {
-        "exclude_tables": ["^sessions$", "^v_media_references_info$"]
+        "exclude_rows": ["^sessions$"],
+        "exclude_tables": ["^v_media_references_info$"]
       }
     }
   }
@@ -172,7 +173,7 @@ your local config. Whatever you set there **fully replaces** the built-in
 default at that path — objects are merged key by key, but arrays and scalars
 are replaced outright, never appended to or merged element-by-element.
 
-The built-in defaults for each application (`db.migration`,
+The built-in defaults for each application (`db.migration`, `db.exclude_rows`,
 `db.exclude_tables`, `rsync.max_size_mb`, `rsync.remote_path`,
 `rsync.directories`, `rsync.exclude_paths`, `rsync.exclude_extensions`) live in
 `load_default_config()` inside `bin/ddep` — copy the path you want to change
@@ -182,7 +183,7 @@ from there.
 (default `/var/www/html/app/public`); override it if your image lays out the
 document root differently.
 
-For example, to replace the built-in `db:pull` table-exclude list for `symfony`:
+For example, to replace the built-in `db:pull` table-exclude lists for `symfony`:
 
 ```json
 {
@@ -191,8 +192,10 @@ For example, to replace the built-in `db:pull` table-exclude list for `symfony`:
   "settings": {
     "symfony": {
       "db": {
+        "exclude_rows": [
+          "^sessions$"
+        ],
         "exclude_tables": [
-          "^sessions$",
           "^v_media_references_info$"
         ]
       }
@@ -202,14 +205,36 @@ For example, to replace the built-in `db:pull` table-exclude list for `symfony`:
 ```
 
 Since this replaces (rather than appends to) the built-in list, include every
-table you still want excluded, not just the ones you're adding.
+table you still want excluded, not just the ones you're adding — each of
+`exclude_rows`/`exclude_tables` replaces independently, so overriding one
+doesn't affect the other.
 
-`exclude_tables` only ever skips *rows*, never the table itself: `db:pull` dumps
-every table's structure (including excluded ones), and only omits data for the
-excluded ones. That way a table like `sessions` — deliberately excluded because
-it holds live, per-environment data that a dump should never overwrite — still
-exists (empty) after a `db:push`, even on a brand-new environment that never
-had it before.
+`db:pull` supports two, independent kinds of table exclusion:
+
+- `exclude_rows` — schema kept, only rows are skipped. Use this for live,
+  per-environment state the application's schema still manages (e.g. a
+  `sessions` table) — an empty table survives a `db:push` even on a brand-new
+  environment, without depending on a migration to recreate it.
+- `exclude_tables` — dropped entirely, structure and data both. `db:pull`
+  doesn't dump it at all, and nothing recreates it afterward: `db.migration`
+  (`database:updateschema` for typo3, `doctrine:migrations:migrate` for
+  symfony) only replays committed migration *files* — if the table/view was
+  never created by one (a hand-written view like `v_media_references_info`
+  usually wasn't; it's not something Doctrine's schema tooling generates on
+  its own), the target environment simply ends up without it, permanently,
+  until something else creates it. Use `exclude_tables` only for something
+  you're fine losing entirely, or that you separately guarantee gets recreated.
+  If the app needs the table/view to exist, even empty, use `exclude_rows`
+  instead — it never depends on a migration running at all.
+
+  To actually guarantee recreation for something like a hand-written view,
+  chain a raw-SQL step onto `db.migration` rather than relying on it alone.
+  For example, override `db.migration` for `symfony` to replay a checked-in
+  `.sql` file via `dbal:run-sql` after the regular migrations:
+
+  ```json
+  "migration": "/usr/bin/php bin/console doctrine:migrations:migrate --no-interaction --quiet && /usr/bin/php bin/console dbal:run-sql -- \"$(cat migrations/v_media_references_info.sql)\""
+  ```
 
 ## Commands
 
