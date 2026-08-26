@@ -49,11 +49,13 @@ This exposes the binary as `vendor/bin/ddep`. Releases are cut as git tags, so
 For local ergonomics with ddev, add a host-scoped custom command that forwards
 to the pinned binary (runs on the host, where docker/ssh/agent already live):
 
-```sh
 # .ddev/commands/host/ddep
+```sh
 #!/usr/bin/env bash
+
 ## Description: Run ddep against a remote environment
 ## Usage: ddep [options] <command>
+
 exec "${DDEV_APPROOT}/vendor/bin/ddep" "$@"
 ```
 
