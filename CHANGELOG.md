@@ -113,6 +113,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Colored output when stderr is a terminal (same codes as
+  docker-compose-deploy's own `deploy.sh`: red for errors, yellow for
+  warnings, cyan for the "Using host/environment" line) - plain otherwise
+  (piped output, a CI log file, bats' test capture, etc.), verified against a
+  real pty.
 - An unrecognized host or environment now falls back to an interactive "not
   found, did you mean?" picker (same mechanism as the existing "none given"
   picker) instead of failing outright - `select_host` for the host argument

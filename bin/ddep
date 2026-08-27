@@ -8,6 +8,16 @@ DEBUG=false
 # Bumped on release; keep in sync with the git tag used for composer.
 DDEP_VERSION="1.0.0"
 
+# Same codes as docker-compose-deploy's own deploy.sh. Only when stderr is a
+# terminal - never for output piped/redirected elsewhere (e.g. a CI log file).
+COLOR_RED="" COLOR_YELLOW="" COLOR_CYAN="" COLOR_RESET=""
+if [ -t 2 ]; then
+    COLOR_RED=$'\033[91m'
+    COLOR_YELLOW=$'\033[0;33m'
+    COLOR_CYAN=$'\033[36m'
+    COLOR_RESET=$'\033[0m'
+fi
+
 CONFIG_FILE=""
 
 LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
@@ -197,13 +207,13 @@ check_requirements() {
         command -v "${cmd}" >/dev/null 2>&1 || missing+=("${cmd}")
     done
     if [[ "${#missing[@]}" -gt 0 ]]; then
-        echo "Error: required command(s) not found on PATH: ${missing[*]}" >&2
+        echo "${COLOR_RED}Error: required command(s) not found on PATH: ${missing[*]}${COLOR_RESET}" >&2
         exit 1
     fi
 
     if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
-        echo "Error: bash >= 4.3 required, but running ${BASH_VERSION}." >&2
-        echo "       On macOS: brew install bash (and put it before /bin/bash on PATH)." >&2
+        echo "${COLOR_RED}Error: bash >= 4.3 required, but running ${BASH_VERSION}." >&2
+        echo "       On macOS: brew install bash (and put it before /bin/bash on PATH).${COLOR_RESET}" >&2
         exit 1
     fi
 }
@@ -400,7 +410,7 @@ load_config() {
     CONFIG_FILE=$(mktemp)
 
     if [[ ! -f "${HOSTS_FILE}" ]]; then
-        echo "Error: ${HOSTS_FILE} missing" >&2
+        echo "${COLOR_RED}Error: ${HOSTS_FILE} missing${COLOR_RESET}" >&2
         exit 1
     fi
 
@@ -411,9 +421,9 @@ load_config() {
         # app/hosts/compose_projects_root are exclusively load_hosts_config's
         # concern (see below) - ddep.json never contributes to them at all.
         if jq -e '(.app != null) or (.hosts != null) or (.compose_projects_root != null)' <<< "${local_json}" >/dev/null; then
-            echo "Warning: ${local_config} sets \"app\"/\"hosts\"/\"compose_projects_root\" - all" >&2
+            echo "${COLOR_YELLOW}Warning: ${local_config} sets \"app\"/\"hosts\"/\"compose_projects_root\" - all" >&2
             echo "         ignored. These are required in ${HOSTS_FILE} instead - remove them" >&2
-            echo "         from ${local_config}." >&2
+            echo "         from ${local_config}.${COLOR_RESET}" >&2
             local_json="$(jq 'del(.app, .hosts, .compose_projects_root)' <<< "${local_json}")"
         fi
     fi
@@ -460,7 +470,7 @@ validate_config() {
     fi
 
     if [[ "${#missing[@]}" -gt 0 ]]; then
-        echo "Error: missing required configuration: ${missing[*]}" >&2
+        echo "${COLOR_RED}Error: missing required configuration: ${missing[*]}${COLOR_RESET}" >&2
         exit 1
     fi
 }
@@ -471,7 +481,7 @@ parse_config_json() {
 
     APP_CONFIG=".settings[\"${APP_NAME}\"]"
     if [[ "$(jq -r "${APP_CONFIG} // empty" "${CONFIG_FILE}")" == "" ]]; then
-        echo "Error: app '${APP_NAME}' is not defined in default configuration" >&2
+        echo "${COLOR_RED}Error: app '${APP_NAME}' is not defined in default configuration${COLOR_RESET}" >&2
         exit 1
     fi
 
@@ -540,7 +550,7 @@ get_mariadb_credentials() {
     local environment_file_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}/.app.env.provision"
 
     if ! ssh "${REMOTE_DOCKER_HOST}" "test -f '${environment_file_path}'"; then
-        echo "Error: ${environment_file_path} missing" >&2
+        echo "${COLOR_RED}Error: ${environment_file_path} missing${COLOR_RESET}" >&2
         exit 1
     fi
 
@@ -610,7 +620,7 @@ mariadb_ssl_args() {
 # before db:import's own stdin read even began.
 ensure_ssh_host_trusted() {
     if ! ssh -n -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no "${REMOTE_DOCKER_HOST}" true; then
-        echo "Error: could not establish an SSH connection to '${REMOTE_DOCKER_HOST}' (host '${host}') - see ssh's own error above. A host key verification failure specifically (not a connection/auth failure) means the key on record for this host has changed - confirm with whoever manages it before proceeding, rather than removing the stale known_hosts entry yourself." >&2
+        echo "${COLOR_RED}Error: could not establish an SSH connection to '${REMOTE_DOCKER_HOST}' (host '${host}') - see ssh's own error above. A host key verification failure specifically (not a connection/auth failure) means the key on record for this host has changed - confirm with whoever manages it before proceeding, rather than removing the stale known_hosts entry yourself.${COLOR_RESET}" >&2
         exit 1
     fi
 }
@@ -622,11 +632,11 @@ ensure_mariadb_image() {
         # A pull can fail transiently or offline; only fatal if the image is not
         # already available on the (remote) daemon.
         if ! docker image inspect "${image}" >/dev/null 2>&1; then
-            echo "Error: could not pull ${image} and it is not available:" >&2
+            echo "${COLOR_RED}Error: could not pull ${image} and it is not available:${COLOR_RESET}" >&2
             echo "${output}" >&2
             exit 1
         fi
-        echo "Warning: could not refresh ${image}; using the existing image." >&2
+        echo "${COLOR_YELLOW}Warning: could not refresh ${image}; using the existing image.${COLOR_RESET}" >&2
     fi
 }
 
@@ -656,12 +666,12 @@ get_container_id() {
         --filter "label=com.docker.compose.service=${APP_NAME}")
 
     if [ -z "$ids" ]; then
-        echo "Error: no container found for project '${git_project_name}', environment '${target_env}', service '${APP_NAME}'." >&2
+        echo "${COLOR_RED}Error: no container found for project '${git_project_name}', environment '${target_env}', service '${APP_NAME}'.${COLOR_RESET}" >&2
         return 1
     fi
 
     if [ "$(printf '%s\n' "$ids" | wc -l)" -gt 1 ]; then
-        echo "Error: multiple containers matched project '${git_project_name}', environment '${target_env}', service '${APP_NAME}':" >&2
+        echo "${COLOR_RED}Error: multiple containers matched project '${git_project_name}', environment '${target_env}', service '${APP_NAME}':${COLOR_RESET}" >&2
         printf '%s\n' "$ids" | sed 's/^/  /' >&2
         return 2
     fi
@@ -687,7 +697,7 @@ select_env() {
     mapfile -t envs < <(get_available_remote_envs)
 
     if [[ "${#envs[@]}" -eq 0 ]]; then
-        echo "Error: no remote environments found on host ${host}" >&2
+        echo "${COLOR_RED}Error: no remote environments found on host ${host}${COLOR_RESET}" >&2
         exit 1
     fi
 
@@ -696,11 +706,11 @@ select_env() {
     # explicitly.
     if [[ ! -r /dev/tty ]]; then
         if [[ -n "${invalid_env}" ]]; then
-            echo "Error: environment '${invalid_env}' not found on host '${host}', and no terminal available to choose one." >&2
+            echo "${COLOR_RED}Error: environment '${invalid_env}' not found on host '${host}', and no terminal available to choose one." >&2
         else
-            echo "Error: no environment given and no terminal available to choose one." >&2
+            echo "${COLOR_RED}Error: no environment given and no terminal available to choose one." >&2
         fi
-        echo "       Pass it explicitly: ddep ${command} ${host} <environment>." >&2
+        echo "       Pass it explicitly: ddep ${command} ${host} <environment>.${COLOR_RESET}" >&2
         exit 1
     fi
 
@@ -717,7 +727,7 @@ select_env() {
             return
         fi
 
-        echo "Invalid selection" >&2
+        echo "${COLOR_RED}Invalid selection${COLOR_RESET}" >&2
     done < /dev/tty
 }
 
@@ -727,13 +737,13 @@ select_host() {
     mapfile -t hosts < <(jq -r '.hosts | keys[]' "${CONFIG_FILE}")
 
     if [[ "${#hosts[@]}" -eq 0 ]]; then
-        echo "Error: host '${host}' is not configured, and .docker/hosts.yaml declares no hosts at all." >&2
+        echo "${COLOR_RED}Error: host '${host}' is not configured, and .docker/hosts.yaml declares no hosts at all.${COLOR_RESET}" >&2
         exit 1
     fi
 
     if [[ ! -r /dev/tty ]]; then
-        echo "Error: host '${host}' is not configured, and no terminal available to choose one." >&2
-        echo "       Configured hosts: ${hosts[*]}" >&2
+        echo "${COLOR_RED}Error: host '${host}' is not configured, and no terminal available to choose one." >&2
+        echo "       Configured hosts: ${hosts[*]}${COLOR_RESET}" >&2
         exit 1
     fi
 
@@ -746,7 +756,7 @@ select_host() {
             return
         fi
 
-        echo "Invalid selection" >&2
+        echo "${COLOR_RED}Invalid selection${COLOR_RESET}" >&2
     done < /dev/tty
 }
 
@@ -768,19 +778,19 @@ confirm_destructive() {
     fi
 
     if [[ ! -r /dev/tty ]]; then
-        echo "Error: refusing to ${action}" >&2
+        echo "${COLOR_RED}Error: refusing to ${action}" >&2
         echo "       on host '${host}' (${target_env}) without confirmation." >&2
-        echo "       No terminal available; re-run with --force to proceed." >&2
+        echo "       No terminal available; re-run with --force to proceed.${COLOR_RESET}" >&2
         exit 1
     fi
 
-    echo "WARNING: about to ${action}" >&2
-    echo "         host '${host}' (${REMOTE_DOCKER_HOST}), environment '${target_env}'." >&2
+    echo "${COLOR_YELLOW}WARNING: about to ${action}" >&2
+    echo "         host '${host}' (${REMOTE_DOCKER_HOST}), environment '${target_env}'.${COLOR_RESET}" >&2
     printf "Type '%s' to continue: " "${expected}" >&2
     read -r answer < /dev/tty
 
     if [[ "${answer}" != "${expected}" ]]; then
-        echo "Aborted." >&2
+        echo "${COLOR_RED}Aborted.${COLOR_RESET}" >&2
         exit 1
     fi
 }
@@ -892,7 +902,7 @@ while [[ $# -gt 0 && -z "${command}" ]]; do
             shift
             ;;
         *)
-            echo "Unknown argument: $1" >&2
+            echo "${COLOR_RED}Unknown argument: $1${COLOR_RESET}" >&2
             exit 1
             ;;
     esac
@@ -904,7 +914,7 @@ fi
 
 for _remaining_arg in "$@"; do
     if [[ "${_remaining_arg}" == -* ]]; then
-        echo "Error: unexpected argument(s) after '${command}': $* - flags must come before the command." >&2
+        echo "${COLOR_RED}Error: unexpected argument(s) after '${command}': $* - flags must come before the command.${COLOR_RESET}" >&2
         exit 1
     fi
 done
@@ -923,13 +933,13 @@ unset _remaining_arg
 case "${command}" in
     config)
         if [[ $# -gt 0 ]]; then
-            echo "Error: unexpected argument(s) after 'config': $* - config takes no arguments." >&2
+            echo "${COLOR_RED}Error: unexpected argument(s) after 'config': $* - config takes no arguments.${COLOR_RESET}" >&2
             exit 1
         fi
         ;;
     exec)
         if [[ $# -ne 3 ]]; then
-            echo "Error: exec requires exactly <host> <environment> <command> (quote the command as one argument if it contains spaces)." >&2
+            echo "${COLOR_RED}Error: exec requires exactly <host> <environment> <command> (quote the command as one argument if it contains spaces).${COLOR_RESET}" >&2
             exit 1
         fi
         host="$1"
@@ -938,7 +948,7 @@ case "${command}" in
         ;;
     *)
         if [[ $# -gt 2 ]]; then
-            echo "Error: unexpected argument(s) after '${command}': $* - expected at most <host> <environment>." >&2
+            echo "${COLOR_RED}Error: unexpected argument(s) after '${command}': $* - expected at most <host> <environment>.${COLOR_RESET}" >&2
             exit 1
         fi
         [[ $# -ge 1 ]] && host="$1"
@@ -969,8 +979,8 @@ fi
 # Needed before Docker environment lookup; the project name comes from the origin
 # remote, so ddep must run inside a git working copy that has one.
 if ! origin_url="$(git remote get-url origin 2>/dev/null)"; then
-    echo "Error: could not determine the project name." >&2
-    echo "       ddep must be run from inside a git working copy with an 'origin' remote." >&2
+    echo "${COLOR_RED}Error: could not determine the project name." >&2
+    echo "       ddep must be run from inside a git working copy with an 'origin' remote.${COLOR_RESET}" >&2
     exit 1
 fi
 git_project_name="$(basename "${origin_url}")"
@@ -989,12 +999,10 @@ elif ! get_available_remote_envs | grep -qxF "${target_env}"; then
     target_env="$(select_env "${target_env}")"
 fi
 
-# stderr, never stdout - several commands (db:export, media:pull's future
-# equivalents, etc.) write real output to stdout, which this must not pollute.
-# Suppressed for db:pull/db:push's own "$0 db:export"/"$0 db:import" child
-# invocation (same host/environment, already announced by the parent).
+# stderr, never stdout (e.g. db:export's dump stream). Suppressed for
+# db:pull/db:push's own child invocation.
 if [[ "${DDEP_CHILD_INVOCATION:-}" != "true" ]]; then
-    echo "Using host '${host}', environment '${target_env}'." >&2
+    echo "${COLOR_CYAN}Using host '${host}', environment '${target_env}'.${COLOR_RESET}" >&2
 fi
 
 # Run commands
@@ -1067,8 +1075,8 @@ elif [ "${command}" = "info" ]; then
 
 elif [ "${command}" = "db:import" ]; then
     if [ -t 0 ]; then
-        echo "Error: db:import reads the SQL dump (plain or gzip) from stdin; pipe one in, e.g.:" >&2
-        echo "       ddep db:import dev < dump.sql.gz" >&2
+        echo "${COLOR_RED}Error: db:import reads the SQL dump (plain or gzip) from stdin; pipe one in, e.g.:" >&2
+        echo "       ddep db:import dev < dump.sql.gz${COLOR_RESET}" >&2
         exit 1
     fi
 
@@ -1089,7 +1097,7 @@ elif [ "${command}" = "db:import" ]; then
     # gzip always writes a header, so empty stdin yields a valid-but-empty archive;
     # verify the decompressed stream actually contains data before proceeding.
     if [ -z "$(gunzip -c "${tmpfile}" | head -c1)" ]; then
-        echo "Error: no data received on stdin; aborting db:import." >&2
+        echo "${COLOR_RED}Error: no data received on stdin; aborting db:import.${COLOR_RESET}" >&2
         exit 1
     fi
 
@@ -1141,7 +1149,7 @@ elif [ "${command}" = "db:import" ]; then
         docker exec "${container_id}" \
             bash -lc "${DB_MIGRATION}"
     else
-        echo "Warning: skipping migration - see above" >&2
+        echo "${COLOR_YELLOW}Warning: skipping migration - see above${COLOR_RESET}" >&2
     fi
 
 elif [ "${command}" = "db:export" ]; then
@@ -1191,7 +1199,7 @@ elif [ "${command}" = "db:pull" ]; then
     # child doesn't prompt again), decompressed into ddev's own importer for
     # the local project in the current working directory.
     if ! command -v ddev >/dev/null 2>&1; then
-        echo "Error: db:pull requires ddev on PATH (only db:export does not)." >&2
+        echo "${COLOR_RED}Error: db:pull requires ddev on PATH (only db:export does not).${COLOR_RESET}" >&2
         exit 1
     fi
     # DOCKER_HOST='' - see run_yq's own comment on this: this shell already
@@ -1216,7 +1224,7 @@ elif [ "${command}" = "db:push" ]; then
     # --force/--debug are forwarded to the db:import child invocation (which
     # is what actually prompts for confirmation), not consumed here.
     if ! command -v ddev >/dev/null 2>&1; then
-        echo "Error: db:push requires ddev on PATH (only db:import does not)." >&2
+        echo "${COLOR_RED}Error: db:push requires ddev on PATH (only db:import does not).${COLOR_RESET}" >&2
         exit 1
     fi
 
