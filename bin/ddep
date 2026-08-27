@@ -548,7 +548,13 @@ get_env_value() {
 get_environment_hostname_primary() {
     local environment_file_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}/.env"
     local value
-    value="$(ssh "${REMOTE_DOCKER_HOST}" "cat '${environment_file_path}' 2>/dev/null" 2>/dev/null | get_env_value "ENVIRONMENT_HOSTNAME_PRIMARY" || true)"
+    # -n: this ssh call never needs input, but without -n it still inherits
+    # and reads from this process's own stdin - fine normally, but silently
+    # corrupts a caller piping a real stream through stdin (confirmed against
+    # a real run: it ate over a megabyte of a 5MB stream before anything else
+    # got to read it). The db:import/db:export callers also skip calling this
+    # function at all now, for the same reason - see the call site.
+    value="$(ssh -n "${REMOTE_DOCKER_HOST}" "cat '${environment_file_path}' 2>/dev/null" 2>/dev/null | get_env_value "ENVIRONMENT_HOSTNAME_PRIMARY" || true)"
     value="${value#\"}"
     value="${value%\"}"
     printf '%s' "${value}"
@@ -564,7 +570,14 @@ get_mariadb_credentials() {
 
     local environment_file_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}/.app.env.provision"
 
-    if ! ssh "${REMOTE_DOCKER_HOST}" "test -f '${environment_file_path}'"; then
+    # -n on both ssh calls below: neither needs input, but without it they'd
+    # inherit and read from this process's own stdin - harmless normally, but
+    # this function runs unconditionally for db:import/db:export too, whose
+    # stdin/stdout carry the actual dump stream. Confirmed against a real run
+    # elsewhere in this script (see get_environment_hostname_primary) that an
+    # unguarded ssh call silently eats megabytes of a piped stream before
+    # anything else gets to read it.
+    if ! ssh -n "${REMOTE_DOCKER_HOST}" "test -f '${environment_file_path}'"; then
         echo "${COLOR_RED}Error: ${environment_file_path} missing${COLOR_RESET}" >&2
         exit 1
     fi
@@ -576,7 +589,7 @@ get_mariadb_credentials() {
     { set +x; } 2>/dev/null
 
     local env_content
-    env_content=$(ssh "${REMOTE_DOCKER_HOST}" "cat '${environment_file_path}'")
+    env_content=$(ssh -n "${REMOTE_DOCKER_HOST}" "cat '${environment_file_path}'")
 
     _mariadb_host=$(get_env_value "MARIADB_HOST" <<< "${env_content}")
     _mariadb_name=$(get_env_value "MARIADB_DBNAME" <<< "${env_content}")
@@ -1015,7 +1028,10 @@ elif ! get_available_remote_envs | grep -qxF "${target_env}"; then
 fi
 
 # stderr, never stdout (e.g. db:export's dump stream). Suppressed for
-# db:pull/db:push's own child invocation.
+# db:pull/db:push's own child invocation. Safe for db:import/db:export too,
+# despite both streaming through this process's own stdin/stdout -
+# get_environment_hostname_primary's ssh call is the thing that has to be
+# stdin-safe (see its own -n), not this call site.
 if [[ "${DDEP_CHILD_INVOCATION:-}" != "true" ]]; then
     environment_hostname_primary="$(get_environment_hostname_primary)"
     if [[ -n "${environment_hostname_primary}" ]]; then
