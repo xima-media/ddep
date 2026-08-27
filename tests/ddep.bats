@@ -149,9 +149,13 @@ _stub_ssh() {
     mkdir -p "$stub"
     cat > "$stub/ssh" <<'STUB'
 #!/bin/sh
-# $1 = host, $2 = remote command string. SSH_CAT_OUTPUT is read from this
-# stub's own inherited environment at invocation time, not baked in when the
-# stub is written (the heredoc above is quoted for exactly this reason).
+# $1 = host, $2 = remote command string. SSH_CAT_OUTPUT/SSH_FAIL are read
+# from this stub's own inherited environment at invocation time, not baked
+# in when the stub is written (the heredoc above is quoted for exactly this
+# reason).
+if [ "$SSH_FAIL" = "true" ]; then
+    exit 1
+fi
 case "$2" in
     test\ -f*) exit 0 ;;
     cat*) printf '%s' "$SSH_CAT_OUTPUT" ;;
@@ -185,6 +189,34 @@ STUB
     '
     [ "$status" -eq 0 ]
     [[ "$output" == *"PORT=3306 SSL=false"* ]]
+}
+
+@test "get_environment_hostname_primary strips the surrounding quotes .env writes" {
+    local stub; stub="$(_stub_ssh)"
+    PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'ENVIRONMENT_ID="proj_dev"\nENVIRONMENT_HOSTNAME_PRIMARY="dev.example.com"\n' \
+        run bash -c '
+        set -euo pipefail
+        source "$DDEP"
+        REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=dev
+        echo "value=[$(get_environment_hostname_primary)]"
+    '
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"value=[dev.example.com]"* ]]
+}
+
+@test "get_environment_hostname_primary is best-effort - an ssh failure yields empty, not a script abort" {
+    local stub; stub="$(_stub_ssh)"
+    PATH="$stub:$PATH" SSH_FAIL=true \
+        run bash -c '
+        set -euo pipefail
+        source "$DDEP"
+        REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=dev
+        echo "value=[$(get_environment_hostname_primary)]"
+        echo "reached-after"
+    '
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"value=[]"* ]]
+    [[ "$output" == *"reached-after"* ]]
 }
 
 @test "mariadb_ssl_args adds --skip-ssl unless MARIADB_SSL is true" {

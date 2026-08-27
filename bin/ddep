@@ -538,6 +538,19 @@ get_env_value() {
     awk -F= -v key="$1" '$1 == key {print $2}'
 }
 
+# Best-effort: prints nothing (never fails) if .env is missing or
+# ENVIRONMENT_HOSTNAME_PRIMARY isn't set - e.g. an environment that hasn't
+# been deployed yet. This is a convenience link, never worth failing a
+# command over. .env's values are double-quoted (env-dev.j2/env-nodev.j2),
+# unlike .app.env.provision's - get_env_value doesn't strip that, so this does.
+get_environment_hostname_primary() {
+    local environment_file_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}/.env"
+    local value
+    value="$(ssh "${REMOTE_DOCKER_HOST}" "cat '${environment_file_path}' 2>/dev/null" 2>/dev/null | get_env_value "ENVIRONMENT_HOSTNAME_PRIMARY" || true)"
+    value="${value#\"}"
+    value="${value%\"}"
+    printf '%s' "${value}"
+}
 
 get_mariadb_credentials() {
     local -n _mariadb_host=$1
@@ -1002,7 +1015,12 @@ fi
 # stderr, never stdout (e.g. db:export's dump stream). Suppressed for
 # db:pull/db:push's own child invocation.
 if [[ "${DDEP_CHILD_INVOCATION:-}" != "true" ]]; then
-    echo "${COLOR_CYAN}Using host '${host}', environment '${target_env}'.${COLOR_RESET}" >&2
+    environment_hostname_primary="$(get_environment_hostname_primary)"
+    if [[ -n "${environment_hostname_primary}" ]]; then
+        echo "${COLOR_CYAN}Using host '${host}', environment '${target_env}'. https://${environment_hostname_primary}${COLOR_RESET}" >&2
+    else
+        echo "${COLOR_CYAN}Using host '${host}', environment '${target_env}'.${COLOR_RESET}" >&2
+    fi
 fi
 
 # Run commands
@@ -1071,7 +1089,9 @@ elif [ "${command}" = "info" ]; then
     if ! get_container_id container_id; then
         exit 1
     fi
-    jq -n --arg container_id "${container_id}" '{container_id: $container_id}'
+    info_hostname_primary="$(get_environment_hostname_primary)"
+    jq -n --arg container_id "${container_id}" --arg hostname_primary "${info_hostname_primary}" \
+        '{container_id: $container_id} + (if $hostname_primary != "" then {ENVIRONMENT_HOSTNAME_PRIMARY: $hostname_primary} else {} end)'
 
 elif [ "${command}" = "db:import" ]; then
     if [ -t 0 ]; then

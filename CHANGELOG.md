@@ -129,7 +129,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   '<host>', environment '<environment>'." to stderr before running - visible
   feedback for when the host silently defaulted to `dev` or the environment
   was resolved via a picker, without polluting stdout (`db:export`, `db:pull`
-  piping into `ddev import-db`, etc. all still get a clean stream).
+  piping into `ddev import-db`, etc. all still get a clean stream). If the
+  remote environment's `.env` has `ENVIRONMENT_HOSTNAME_PRIMARY` set, its
+  `https://` URL is appended to the same line. Best-effort - a not-yet-deployed
+  environment (no `.env` yet) just omits it, never fails the command.
+- `info` includes `ENVIRONMENT_HOSTNAME_PRIMARY` in its JSON output alongside
+  `container_id`, when the remote environment's `.env` has it set.
 - `MARIADB_SSL` (`true`/`false`, optional in `.app.env.provision`, defaults to
   `false`): controls whether `--skip-ssl` is passed to every `mariadb`/
   `mariadb-dump` call (`db:import`/`db:export`, and the `exclude_rows`/
