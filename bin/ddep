@@ -356,15 +356,10 @@ run_yq() {
 #
 # run_yq is called exactly once here (just to convert the whole file to
 # JSON), not once per field - the yq Docker fallback pays a real per-`docker
-# run` container-startup cost (~0.5s, confirmed empirically: even a trivial
-# already-cached `docker run --rm alpine true` costs about the same, so it's
-# generic container lifecycle overhead, not image-pull time an upfront `docker
-# pull` could avoid) regardless of whether the image is already cached
-# locally. The previous version called it up to 11 times (app_name,
-# compose_projects_root, then 3 calls per host group x 3 groups), paying that
-# cost 11x on every run needing it. Everything past that single conversion is
-# jq against the resulting JSON, which is already a required, always-local
-# dependency - no further yq/Docker involvement at all.
+# run` container-startup cost regardless of whether the image is already
+# cached (confirmed empirically - it's generic container lifecycle overhead,
+# not image-pull time). Everything past that single conversion is jq against
+# the resulting JSON, already a required, always-local dependency.
 load_hosts_config() {
     if [[ ! -f "${HOSTS_FILE}" ]]; then
         echo '{}'
@@ -573,19 +568,18 @@ get_mariadb_credentials() {
     fi
 }
 
-# Populates the nameref array with ["--skip-ssl"] unless MARIADB_SSL=true, else
-# leaves it empty - an array, not a plain string, so it splices cleanly via
-# "${_ssl_args[@]}" into a "$@"-forwarded argument list (zero elements
-# contribute nothing, unlike an empty-string variable, which would land as a
-# stray blank positional and shift every argument after it).
+# Populates the nameref array with ["--skip-ssl"] unless MARIADB_SSL=true,
+# else leaves it empty - an array, not a string, so it splices cleanly via
+# "${_ssl_args[@]}" into a "$@"-forwarded list (an empty array contributes
+# nothing, unlike an empty-string variable, which would land as a stray blank
+# positional and shift every argument after it).
 #
-# The mariadb/mariadb-dump client already attempts SSL by default (with
-# certificate verification silently disabled for a passwordless connection,
-# the source of the "option --ssl-verify-server-cert is disabled" warning seen
-# throughout this project's dumps/imports), so MARIADB_SSL=true here means
-# "leave that default alone" rather than forcing anything further - real
-# verification would additionally need --ssl-ca, not added here since no
-# environment has needed it yet.
+# mariadb/mariadb-dump already attempt SSL by default (with certificate
+# verification silently disabled for a passwordless connection - the "option
+# --ssl-verify-server-cert is disabled" warning seen throughout this
+# project's dumps/imports), so MARIADB_SSL=true here just leaves that default
+# alone. Real verification would additionally need --ssl-ca, not supported
+# yet.
 mariadb_ssl_args() {
     local -n _ssl_args=$1
     if [[ "$2" != "true" ]]; then
@@ -877,19 +871,16 @@ for _remaining_arg in "$@"; do
 done
 unset _remaining_arg
 
-# host/environment are positional, after the command: "ddep <command> [host]
-# [environment]". Both stay optional - host defaults to "dev" below,
-# environment falls back to the interactive picker (select_env) further down
-# if still empty - so "ddep logs", "ddep logs dev", and "ddep logs dev main"
-# all work, just increasingly explicit.
+# host/environment are positional, after the command. Both stay optional -
+# host defaults to "dev" below, environment falls back to the interactive
+# picker (select_env) further down if still empty.
 #
-# "config" takes neither (it never touches a remote host). "exec" requires
-# all three (host, environment, and the remote command to run) since,
-# unlike every other command, it has a third positional slot - making host/
-# environment optional there would make "ddep exec ls" ambiguous between
-# "host=ls" and "command=ls with default host/environment". "ssh" opens an
-# interactive shell only and never takes a command at all (see "exec" for
-# that) - the ambiguity above is exactly why the two are separate commands.
+# "config" takes neither (never touches a remote host). "exec" requires all
+# three (host, environment, command) since its third positional slot would
+# otherwise be ambiguous with an optional host/environment (is "ddep exec ls"
+# host=ls, or command=ls with default host/environment?) - "ssh" opens an
+# interactive shell only, never a command, which is exactly why the two are
+# split into separate commands.
 case "${command}" in
     config)
         if [[ $# -gt 0 ]]; then
@@ -1146,50 +1137,32 @@ elif [ "${command}" = "db:export" ]; then
     )
 
 elif [ "${command}" = "db:pull" ]; then
-    # A thin local-dev convenience wrapper: db:export from the remote (host/
-    # target_env are already resolved above, interactively if needed - passed
-    # through explicitly so the child process doesn't prompt a second time),
-    # decompressed and handed to ddev's own importer for the local project in
-    # the current working directory.
+    # Local-dev convenience wrapper: db:export from the remote (host/
+    # target_env already resolved above, passed through explicitly so the
+    # child doesn't prompt again), decompressed into ddev's own importer for
+    # the local project in the current working directory.
     if ! command -v ddev >/dev/null 2>&1; then
         echo "Error: db:pull requires ddev on PATH (only db:export does not)." >&2
         exit 1
     fi
-    # DOCKER_HOST='' - see run_yq's own comment on this: the db:export child
-    # process exports DOCKER_HOST=ssh://<remote host> for its own remote work,
-    # and this shell already has it exported too (set unconditionally before
-    # every command's dispatch, above). ddev's own internal docker calls would
-    # otherwise inherit it and query the *remote* daemon instead of the local
-    # one its db container actually runs on (confirmed against a real run:
-    # ddev-hostname tried to map the local project's hostname to the remote
-    # host's IP).
+    # DOCKER_HOST='' - see run_yq's own comment on this: this shell already
+    # has DOCKER_HOST=ssh://<remote host> exported for the remote side, which
+    # ddev's own internal docker calls would otherwise inherit and query
+    # instead of the local daemon its db container runs on.
     "$0" db:export "${host}" "${target_env}" | gzip -dc | DOCKER_HOST='' ddev import-db
 
 elif [ "${command}" = "db:push" ]; then
-    # A thin local-dev convenience wrapper, the reverse of db:pull: dumps the
-    # local ddev project's database via `ddev export-db` (its normal full
-    # dump - ddev's own internal db-container access, so no separate
-    # credential/binary-name assumptions of our own), applying this project's
-    # own exclude_rows/exclude_tables by filtering the dump *text* rather than
-    # asking ddev to skip tables at dump time (it has no such option).
-    #
-    # An earlier version bypassed `ddev export-db` and ran `mariadb-dump`
-    # directly inside ddev's db container via `ddev exec`, resolving matching
-    # table names as --ignore-table args exactly like db:export does for the
-    # remote side. That failed against a real project - the database name
-    # argument never reached mariadb-dump ("No database selected"), meaning
-    # `ddev exec -s db -- sh -c '...' sh arg1 arg2 ...`'s trailing args don't
-    # reach the inner script's "$@" the way `docker exec`'s do. Filtering the
-    # dump text sidesteps that entirely.
-    #
-    # The filter matches mariadb-dump's own comment markers
-    # ("-- Table structure for table `x`", "-- Dumping data for table `x`",
-    # "-- Temporary/Final table structure for view `x`") to find each
-    # table/view's structure and data sections. exclude_tables suppresses
-    # both (dropped entirely); exclude_rows suppresses only the data section
-    # (schema kept). Verified end to end against a real dump: filtered output
-    # re-imports cleanly, a rows-excluded table exists but empty, a
-    # tables-excluded view is entirely absent.
+    # Local-dev convenience wrapper, the reverse of db:pull: dumps the local
+    # ddev project's database via `ddev export-db`, then applies this
+    # project's own exclude_rows/exclude_tables by filtering the dump *text*
+    # for mariadb-dump's own comment markers ("-- Table structure for table
+    # `x`", "-- Dumping data for table `x`", "-- Temporary/Final table
+    # structure for view `x`") - `ddev export-db` has no table-exclusion
+    # option of its own, and `ddev exec` doesn't forward trailing arguments
+    # to an inner script's "$@" the way `docker exec` does (confirmed against
+    # a real project), which rules out mirroring db:export's --ignore-table
+    # approach directly. exclude_tables suppresses a table/view's structure
+    # and data both; exclude_rows only its data section.
     #
     # --force/--debug are forwarded to the db:import child invocation (which
     # is what actually prompts for confirmation), not consumed here.
