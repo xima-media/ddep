@@ -791,8 +791,14 @@ resolve_local_ignore_table_args() {
     local regex
     regex=$(IFS="|"; echo "${_local_patterns[*]}")
 
+    # DOCKER_HOST='' - see run_yq's own comment on this: by this point the
+    # main script has already exported DOCKER_HOST=ssh://<remote host> for the
+    # remote side, which ddev's own internal docker calls would otherwise
+    # inherit and use instead of the local daemon its db container actually
+    # runs on (confirmed against a real run: ddev-hostname tried to map the
+    # local project's hostname to the *remote* host's IP).
     local tables
-    tables=$(ddev exec -s db -- mysql -uroot -proot -N -e "
+    tables=$(DOCKER_HOST='' ddev exec -s db -- mysql -uroot -proot -N -e "
         SELECT TABLE_NAME
         FROM information_schema.tables
         WHERE table_schema='db'
@@ -1157,7 +1163,15 @@ elif [ "${command}" = "db:pull" ]; then
         echo "Error: db:pull requires ddev on PATH (only db:export does not)." >&2
         exit 1
     fi
-    "$0" db:export "${host}" "${target_env}" | gzip -dc | ddev import-db
+    # DOCKER_HOST='' - see run_yq's own comment on this: the db:export child
+    # process exports DOCKER_HOST=ssh://<remote host> for its own remote work,
+    # and this shell already has it exported too (set unconditionally before
+    # every command's dispatch, above). ddev's own internal docker calls would
+    # otherwise inherit it and query the *remote* daemon instead of the local
+    # one its db container actually runs on (confirmed against a real run:
+    # ddev-hostname tried to map the local project's hostname to the remote
+    # host's IP).
+    "$0" db:export "${host}" "${target_env}" | gzip -dc | DOCKER_HOST='' ddev import-db
 
 elif [ "${command}" = "db:push" ]; then
     # A thin local-dev convenience wrapper, the reverse of db:pull: dumps the
@@ -1188,11 +1202,12 @@ elif [ "${command}" = "db:push" ]; then
     [[ "${DEBUG}" == "true" ]] && import_args+=("--debug")
     import_args+=("db:import" "${host}" "${target_env}")
 
+    # DOCKER_HOST='' - see db:pull's own comment on this; same reasoning.
     (
-        ddev exec -s db -- sh -c 'mysqldump -uroot -proot --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
+        DOCKER_HOST='' ddev exec -s db -- sh -c 'mysqldump -uroot -proot --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
             sh "${tables_ignore_args[@]}" db
 
-        ddev exec -s db -- sh -c 'mysqldump -uroot -proot --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
+        DOCKER_HOST='' ddev exec -s db -- sh -c 'mysqldump -uroot -proot --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
             sh "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" db
     ) | gzip -dc | "$0" "${import_args[@]}"
 fi

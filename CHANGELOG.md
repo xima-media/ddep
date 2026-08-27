@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `db:pull`/`db:push` no longer inherit `DOCKER_HOST` from the surrounding
+  ddep process. Every command exports `DOCKER_HOST=ssh://<remote host>`
+  before dispatch (for the remote side); `db:pull`/`db:push`'s `ddev
+  import-db`/`ddev exec -s db` calls ran in that same process/pipeline and
+  inherited it, so ddev's own internal docker calls queried the *remote*
+  daemon instead of the local one its db container actually runs on -
+  confirmed against a real run: `ddev-hostname` tried to map the local
+  project's hostname to the remote host's IP. Fixed the same way `run_yq`'s
+  Docker fallback already guards against this: `DOCKER_HOST=''` on each call.
 - `db:export`/`db:import` now pin `--default-character-set=utf8mb4` on every
   `mariadb-dump`/`mariadb` invocation - without it, the client library's own
   default (`latin1`) silently mangled multi-byte UTF-8 content on the way
