@@ -991,7 +991,11 @@ fi
 
 # stderr, never stdout - several commands (db:export, media:pull's future
 # equivalents, etc.) write real output to stdout, which this must not pollute.
-echo "Using host '${host}', environment '${target_env}'." >&2
+# Suppressed for db:pull/db:push's own "$0 db:export"/"$0 db:import" child
+# invocation (same host/environment, already announced by the parent).
+if [[ "${DDEP_CHILD_INVOCATION:-}" != "true" ]]; then
+    echo "Using host '${host}', environment '${target_env}'." >&2
+fi
 
 # Run commands
 if [ "${command}" = "media:push" ]; then
@@ -1194,7 +1198,7 @@ elif [ "${command}" = "db:pull" ]; then
     # has DOCKER_HOST=ssh://<remote host> exported for the remote side, which
     # ddev's own internal docker calls would otherwise inherit and query
     # instead of the local daemon its db container runs on.
-    "$0" db:export "${host}" "${target_env}" | gzip -dc | DOCKER_HOST='' ddev import-db
+    DDEP_CHILD_INVOCATION=true "$0" db:export "${host}" "${target_env}" | gzip -dc | DOCKER_HOST='' ddev import-db
 
 elif [ "${command}" = "db:push" ]; then
     # Local-dev convenience wrapper, the reverse of db:pull: dumps the local
@@ -1246,5 +1250,5 @@ elif [ "${command}" = "db:push" ]; then
             suppress = (exclude_tables != "" && name ~ exclude_tables)
         }
         { if (!suppress) print }
-    ' | "$0" "${import_args[@]}"
+    ' | DDEP_CHILD_INVOCATION=true "$0" "${import_args[@]}"
 fi
