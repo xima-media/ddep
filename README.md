@@ -312,6 +312,10 @@ ddep ssh dev
 # Execute a command inside the dev application container
 ddep exec dev feature_xyz "vendor/bin/typo3 list"
 
+# Copy a local file into the dev application container - exec forwards
+# stdin (docker exec -i), so a plain redirect works, binary-safe
+ddep exec dev feature_xyz "cat > /path/in/container/file" < local-file
+
 # Follow the dev application container's log output
 ddep logs dev
 
