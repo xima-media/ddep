@@ -538,11 +538,13 @@ get_env_value() {
     awk -F= -v key="$1" '$1 == key {print $2}'
 }
 
-# Best-effort: prints nothing (never fails) if .env is missing or
-# ENVIRONMENT_HOSTNAME_PRIMARY isn't set - e.g. an environment that hasn't
-# been deployed yet. This is a convenience link, never worth failing a
-# command over. .env's values are double-quoted (env-dev.j2/env-nodev.j2),
-# unlike .app.env.provision's - get_env_value doesn't strip that, so this does.
+# Best-effort: never fails, even if .env is missing or ENVIRONMENT_HOSTNAME_PRIMARY
+# isn't set (e.g. an environment that hasn't been deployed yet) - a convenience
+# link, not worth failing a command over. The "|| true" is required, not
+# decorative: under pipefail, ssh failing still aborts the script via set -e
+# even though the downstream get_env_value/awk always exits 0 itself. .env's
+# values are double-quoted (env-dev.j2/env-nodev.j2), unlike .app.env.provision's
+# - get_env_value doesn't strip that, so this does.
 get_environment_hostname_primary() {
     local environment_file_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}/.env"
     local value
