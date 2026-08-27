@@ -266,7 +266,12 @@ doesn't affect the other.
 `host` and `environment` are positional, after the command, and stay optional
 for every command except `exec` (see above) and `config` (takes neither):
 `host` defaults to `dev`; `environment`, if omitted, is picked interactively
-from the environments currently deployed on `host`.
+from the environments currently deployed on `host`. A `host` or `environment`
+that doesn't match anything falls back to the same interactive picker ("not
+found, did you mean?") instead of failing outright - both still fail
+immediately, same as an omitted value, when no terminal is available (CI).
+Once resolved, the host/environment actually in use are always printed to
+stderr before anything runs.
 
 `db:import` and `media:push` overwrite data in the remote environment and ask for
 confirmation before running. On non-`dev` hosts you must type the host slug to

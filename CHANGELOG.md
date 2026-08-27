@@ -113,6 +113,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An unrecognized host or environment now falls back to an interactive "not
+  found, did you mean?" picker (same mechanism as the existing "none given"
+  picker) instead of failing outright - `select_host` for the host argument
+  (checked against `.docker/hosts.yaml`), reusing `select_env` with the
+  invalid value for the environment argument (checked against what's actually
+  deployed on the host). Still fails immediately, same as before, when no
+  terminal is available (CI/pipe).
+- Every command that resolves a host/environment now prints "Using host
+  '<host>', environment '<environment>'." to stderr before running - visible
+  feedback for when the host silently defaulted to `dev` or the environment
+  was resolved via a picker, without polluting stdout (`db:export`, `db:pull`
+  piping into `ddev import-db`, etc. all still get a clean stream).
 - `MARIADB_SSL` (`true`/`false`, optional in `.app.env.provision`, defaults to
   `false`): controls whether `--skip-ssl` is passed to every `mariadb`/
   `mariadb-dump` call (`db:import`/`db:export`, and the `exclude_rows`/

@@ -484,8 +484,8 @@ parse_config_json() {
     REMOTE_DOCKER_HOST=$(jq -r ".hosts.${host} // empty" "${CONFIG_FILE}")
 
     if [[ -z "${REMOTE_DOCKER_HOST}" ]]; then
-        echo "Error: host '${host}' is not configured" >&2
-        exit 1
+        host="$(select_host)"
+        REMOTE_DOCKER_HOST=$(jq -r ".hosts.${host} // empty" "${CONFIG_FILE}")
     fi
 
     # Database configuration
@@ -679,7 +679,9 @@ get_available_remote_envs() {
     | sort -u
 }
 
+# $1 (optional): an environment that didn't match, for a "not found" prompt.
 select_env() {
+    local invalid_env="${1:-}"
     local envs=()
 
     mapfile -t envs < <(get_available_remote_envs)
@@ -693,17 +695,54 @@ select_env() {
     # pipe, e.g. db:import). Without a terminal (CI), environment must be given
     # explicitly.
     if [[ ! -r /dev/tty ]]; then
-        echo "Error: no environment given and no terminal available to choose one." >&2
+        if [[ -n "${invalid_env}" ]]; then
+            echo "Error: environment '${invalid_env}' not found on host '${host}', and no terminal available to choose one." >&2
+        else
+            echo "Error: no environment given and no terminal available to choose one." >&2
+        fi
         echo "       Pass it explicitly: ddep ${command} ${host} <environment>." >&2
         exit 1
     fi
 
-    echo "Select environment on ${host}:" >&2
+    if [[ -n "${invalid_env}" ]]; then
+        echo "Environment '${invalid_env}' not found on host '${host}' - did you mean one of these?" >&2
+    else
+        echo "Select environment on ${host}:" >&2
+    fi
 
     PS3="Environment: "
     select env in "${envs[@]}"; do
         if [[ -n "${env}" ]]; then
             printf '%s\n' "${env}"
+            return
+        fi
+
+        echo "Invalid selection" >&2
+    done < /dev/tty
+}
+
+# Same "not found, did you mean?" pattern as select_env, but for the host.
+select_host() {
+    local hosts=()
+    mapfile -t hosts < <(jq -r '.hosts | keys[]' "${CONFIG_FILE}")
+
+    if [[ "${#hosts[@]}" -eq 0 ]]; then
+        echo "Error: host '${host}' is not configured, and .docker/hosts.yaml declares no hosts at all." >&2
+        exit 1
+    fi
+
+    if [[ ! -r /dev/tty ]]; then
+        echo "Error: host '${host}' is not configured, and no terminal available to choose one." >&2
+        echo "       Configured hosts: ${hosts[*]}" >&2
+        exit 1
+    fi
+
+    echo "Host '${host}' not found - did you mean one of these?" >&2
+
+    PS3="Host: "
+    select h in "${hosts[@]}"; do
+        if [[ -n "${h}" ]]; then
+            printf '%s\n' "${h}"
             return
         fi
 
@@ -946,7 +985,13 @@ export DOCKER_HOST="ssh://${REMOTE_DOCKER_HOST}"
 
 if [[ -z "${target_env:-}" ]]; then
     target_env="$(select_env)"
+elif ! get_available_remote_envs | grep -qxF "${target_env}"; then
+    target_env="$(select_env "${target_env}")"
 fi
+
+# stderr, never stdout - several commands (db:export, media:pull's future
+# equivalents, etc.) write real output to stdout, which this must not pollute.
+echo "Using host '${host}', environment '${target_env}'." >&2
 
 # Run commands
 if [ "${command}" = "media:push" ]; then
