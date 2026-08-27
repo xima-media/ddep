@@ -149,10 +149,13 @@ _stub_ssh() {
     mkdir -p "$stub"
     cat > "$stub/ssh" <<'STUB'
 #!/bin/sh
-# $1 = host, $2 = remote command string. SSH_CAT_OUTPUT/SSH_FAIL are read
+# Every real call is `ssh -n host command` - drop -n if present, so $1 =
+# host, $2 = remote command string regardless of whether a future call site
+# adds other flags before the host too. SSH_CAT_OUTPUT/SSH_FAIL are read
 # from this stub's own inherited environment at invocation time, not baked
 # in when the stub is written (the heredoc above is quoted for exactly this
 # reason).
+[ "$1" = "-n" ] && shift
 if [ "$SSH_FAIL" = "true" ]; then
     exit 1
 fi
@@ -217,6 +220,58 @@ STUB
     [ "$status" -eq 0 ]
     [[ "$output" == *"value=[]"* ]]
     [[ "$output" == *"reached-after"* ]]
+}
+
+# Real ssh reads (and discards) from its inherited stdin to set up the
+# session, even for a no-input remote command like `true`/`cat somefile` -
+# unless called with -n. Every ssh call in bin/ddep runs while this
+# process's own stdin could be a caller's real piped stream (e.g.
+# db:import's dump) - confirmed as the actual cause of intermittent
+# db:import corruption, silently eating megabytes off the front of the
+# stream before db:import's own stdin read even began. This stub
+# reproduces that specific behavior (not the canned-output one _stub_ssh
+# provides) so a future ssh call that forgets -n fails these tests instead
+# of shipping.
+_stub_ssh_stdin_guard() {
+    local stub="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "$stub"
+    cat > "$stub/ssh" <<'STUB'
+#!/bin/sh
+has_n=0
+for arg in "$@"; do
+    [ "$arg" = "-n" ] && has_n=1
+done
+[ "$has_n" = "1" ] || dd bs=1024 count=1 of=/dev/null 2>/dev/null
+exit 0
+STUB
+    chmod +x "$stub/ssh"
+    echo "$stub"
+}
+
+@test "get_environment_hostname_primary's ssh call does not consume piped stdin" {
+    local stub; stub="$(_stub_ssh_stdin_guard)"
+    local payload; payload="$(head -c 100000 /dev/zero | tr '\0' 'X')"
+    PATH="$stub:$PATH" run bash -c '
+        source "$DDEP"
+        REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=dev
+        get_environment_hostname_primary >/dev/null
+        cat
+    ' <<< "$payload"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$payload" ]
+}
+
+@test "get_mariadb_credentials's ssh calls do not consume piped stdin" {
+    local stub; stub="$(_stub_ssh_stdin_guard)"
+    local payload; payload="$(head -c 100000 /dev/zero | tr '\0' 'X')"
+    PATH="$stub:$PATH" run bash -c '
+        source "$DDEP"
+        REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=dev
+        get_mariadb_credentials h n u p port ssl >/dev/null
+        cat
+    ' <<< "$payload"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$payload" ]
 }
 
 @test "mariadb_ssl_args adds --skip-ssl unless MARIADB_SSL is true" {
