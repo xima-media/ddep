@@ -352,41 +352,49 @@ run_yq() {
 # .docker/hosts.yaml - the exclusive source for all three (see HOSTS_FILE's
 # comment); "{}" if the file doesn't exist, though load_config never lets a
 # real run get this far without it. compose_projects_root has no built-in
-# default - validate_config requires it, same as app/hosts. Uses run_yq for
-# the YAML reads and jq to assemble the result, rather than one large yq
-# expression, since each is already relied on elsewhere in this script.
+# default - validate_config requires it, same as app/hosts.
+#
+# run_yq is called exactly once here (just to convert the whole file to
+# JSON), not once per field - the yq Docker fallback pays a real per-`docker
+# run` container-startup cost (~0.5s, confirmed empirically: even a trivial
+# already-cached `docker run --rm alpine true` costs about the same, so it's
+# generic container lifecycle overhead, not image-pull time an upfront `docker
+# pull` could avoid) regardless of whether the image is already cached
+# locally. The previous version called it up to 11 times (app_name,
+# compose_projects_root, then 3 calls per host group x 3 groups), paying that
+# cost 11x on every run needing it. Everything past that single conversion is
+# jq against the resulting JSON, which is already a required, always-local
+# dependency - no further yq/Docker involvement at all.
 load_hosts_config() {
     if [[ ! -f "${HOSTS_FILE}" ]]; then
         echo '{}'
         return
     fi
 
-    local app compose_projects_root
-    app="$(run_yq '.all.vars.app_name // ""')"
-    # Same directory ansible/deploy.yml's remote_project_dir is built from.
-    compose_projects_root="$(run_yq '.all.vars.compose_projects_root // ""')"
-
-    local group group_hosts first_user first_addr hosts_json='{}'
-    for group in dev test live; do
-        # Every host in this group, addressable by its own hosts.yaml key.
-        group_hosts="$(run_yq ".all.children.${group}.hosts // {} | with_entries(.value = \"\(.value.ansible_user)@\(.value.ansible_host)\")")"
-        hosts_json="$(jq --argjson gh "${group_hosts}" '. + $gh' <<< "${hosts_json}")"
-
-        # Tier-level convenience default (host positional arg = dev/test/live) -
-        # the first host in file order. Not reliable for targeting one specific
-        # host once a group has more than one - address it by its own key
-        # instead (above).
-        first_user="$(run_yq ".all.children.${group}.hosts // {} | to_entries | .[0].value.ansible_user // \"\"")"
-        first_addr="$(run_yq ".all.children.${group}.hosts // {} | to_entries | .[0].value.ansible_host // \"\"")"
-        if [[ -n "${first_user}" && -n "${first_addr}" ]]; then
-            hosts_json="$(jq --arg group "${group}" --arg val "${first_user}@${first_addr}" '. + {($group): $val}' <<< "${hosts_json}")"
-        fi
-    done
-
-    jq -n --arg app "${app}" --arg compose_projects_root "${compose_projects_root}" --argjson hosts "${hosts_json}" '
-        (if $app != "" then {app: $app} else {} end)
-        + (if $compose_projects_root != "" then {compose_projects_root: $compose_projects_root} else {} end)
-        + (if ($hosts | length) > 0 then {hosts: $hosts} else {} end)
+    run_yq '.' | jq '
+        .all as $all
+        | ($all.vars.app_name // "") as $app
+        # Same directory ansible/deploy.yml derives remote_project_dir from.
+        | ($all.vars.compose_projects_root // "") as $compose_projects_root
+        | (reduce ["dev", "test", "live"][] as $group
+            ({};
+              ($all.children[$group].hosts // {}) as $group_hosts
+              # Every host in this group, addressable by its own hosts.yaml key.
+              | . + ($group_hosts | with_entries(.value = "\(.value.ansible_user)@\(.value.ansible_host)"))
+              | ($group_hosts | to_entries | .[0].value // {}) as $first
+              # Tier-level convenience default (host positional arg = dev/test/
+              # live) - the first host in file order. Not reliable for
+              # targeting one specific host once a group has more than one -
+              # address it by its own key instead (above).
+              | if ($first.ansible_user != null and $first.ansible_host != null)
+                then . + {($group): "\($first.ansible_user)@\($first.ansible_host)"}
+                else .
+                end
+            )
+          ) as $hosts
+        | (if $app != "" then {app: $app} else {} end)
+          + (if $compose_projects_root != "" then {compose_projects_root: $compose_projects_root} else {} end)
+          + (if ($hosts | length) > 0 then {hosts: $hosts} else {} end)
     '
 }
 
