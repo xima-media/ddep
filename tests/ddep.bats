@@ -36,40 +36,66 @@ setup() {
     [[ "$output" == *"Unknown argument"* ]]
 }
 
-@test "--host without a value exits 1" {
-    run "$DDEP" --host
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"--host requires a value"* ]]
-}
-
-@test "--host followed by an option is rejected" {
-    run "$DDEP" --host --debug logs
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"--host requires a value"* ]]
-}
-
-@test "--env without a value exits 1" {
-    run "$DDEP" --env
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"--env requires a value"* ]]
-}
-
 @test "a flag after the command is rejected, not silently absorbed" {
-    run "$DDEP" logs --env dwis-3442
+    run "$DDEP" logs --force
     [ "$status" -eq 1 ]
     [[ "$output" == *"flags must come before the command"* ]]
 }
 
-@test "flags before ssh parse as options, not as part of the container command" {
-    # No git repo in BATS_TEST_TMPDIR - if --host/--env parsed correctly, arg
-    # parsing succeeds and it fails later, for an unrelated reason (no git
-    # repo). If they'd been swallowed into ssh_args instead (the bug), it
-    # would fail identically - so this only distinguishes a REGRESSION back
-    # to "flags must come before the command" ever firing here, which it must not.
-    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" --host dev --env dwis-3442 ssh true'
+@test "positional host/environment after the command parse as such, not as unexpected arguments" {
+    # No git repo in BATS_TEST_TMPDIR - if host/environment parsed correctly,
+    # arg parsing succeeds and it fails later, for an unrelated reason (no git
+    # repo). Distinguishes a regression back to "flags must come before the
+    # command"/"unexpected argument(s)" ever firing here, which it must not.
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" ssh dev dwis-3442'
     [ "$status" -eq 1 ]
-    [[ "$output" != *"flags must come before the command"* ]]
+    [[ "$output" != *"unexpected argument"* ]]
     [[ "$output" == *"could not determine the project name"* ]]
+}
+
+@test "ssh rejects more than two positional arguments" {
+    run "$DDEP" ssh dev dwis-3442 extra
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"expected at most <host> <environment>"* ]]
+}
+
+@test "exec requires exactly host, environment, and command" {
+    run "$DDEP" exec dev
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"exec requires exactly <host> <environment> <command>"* ]]
+
+    run "$DDEP" exec dev dwis-3442
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"exec requires exactly <host> <environment> <command>"* ]]
+
+    run "$DDEP" exec dev dwis-3442 "echo hi" extra
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"exec requires exactly <host> <environment> <command>"* ]]
+}
+
+@test "exec with host, environment, and command parses as such, not as unexpected arguments" {
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" exec dev dwis-3442 "echo hi"'
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"unexpected argument"* ]]
+    [[ "$output" == *"could not determine the project name"* ]]
+}
+
+@test "db:pull/db:push are recognized commands, not misread as unexpected arguments" {
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" db:pull dev dwis-3442'
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"unexpected argument"* ]]
+    [[ "$output" == *"could not determine the project name"* ]]
+
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" db:push dev dwis-3442'
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"unexpected argument"* ]]
+    [[ "$output" == *"could not determine the project name"* ]]
+}
+
+@test "config rejects any positional arguments" {
+    run "$DDEP" config extra
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"config takes no arguments"* ]]
 }
 
 @test "config prints the resolved config as JSON, outside a git repo" {
@@ -123,9 +149,13 @@ _stub_ssh() {
     mkdir -p "$stub"
     cat > "$stub/ssh" <<'STUB'
 #!/bin/sh
-# $1 = host, $2 = remote command string. SSH_CAT_OUTPUT is read from this
-# stub's own inherited environment at invocation time, not baked in when the
-# stub is written (the heredoc above is quoted for exactly this reason).
+# $1 = host, $2 = remote command string. SSH_CAT_OUTPUT/SSH_FAIL are read
+# from this stub's own inherited environment at invocation time, not baked
+# in when the stub is written (the heredoc above is quoted for exactly this
+# reason).
+if [ "$SSH_FAIL" = "true" ]; then
+    exit 1
+fi
 case "$2" in
     test\ -f*) exit 0 ;;
     cat*) printf '%s' "$SSH_CAT_OUTPUT" ;;
@@ -137,28 +167,72 @@ STUB
 
 @test "get_mariadb_credentials reads the canonical MARIADB_* names, not per-app ones" {
     local stub; stub="$(_stub_ssh)"
-    PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'MARIADB_HOST=10.0.0.8\nMARIADB_DBNAME=mydb\nMARIADB_USER=myuser\nMARIADB_PASSWORD=mypass\nMARIADB_PORT=3307\nSYMFONY_DATABASE_HOST=should-be-ignored\n' \
+    PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'MARIADB_HOST=10.0.0.8\nMARIADB_DBNAME=mydb\nMARIADB_USER=myuser\nMARIADB_PASSWORD=mypass\nMARIADB_PORT=3307\nMARIADB_SSL=true\nSYMFONY_DATABASE_HOST=should-be-ignored\n' \
         run bash -c '
         source "$DDEP"
         REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=staging
-        get_mariadb_credentials h n u p port
-        echo "HOST=$h NAME=$n USER=$u PASS=$p PORT=$port"
+        get_mariadb_credentials h n u p port ssl
+        echo "HOST=$h NAME=$n USER=$u PASS=$p PORT=$port SSL=$ssl"
     '
     [ "$status" -eq 0 ]
-    [[ "$output" == *"HOST=10.0.0.8 NAME=mydb USER=myuser PASS=mypass PORT=3307"* ]]
+    [[ "$output" == *"HOST=10.0.0.8 NAME=mydb USER=myuser PASS=mypass PORT=3307 SSL=true"* ]]
 }
 
-@test "get_mariadb_credentials defaults the port to 3306 when unset" {
+@test "get_mariadb_credentials defaults the port to 3306 and ssl to false when unset" {
     local stub; stub="$(_stub_ssh)"
     PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'MARIADB_HOST=10.0.0.8\nMARIADB_DBNAME=mydb\nMARIADB_USER=myuser\nMARIADB_PASSWORD=mypass\n' \
         run bash -c '
         source "$DDEP"
         REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=staging
-        get_mariadb_credentials h n u p port
-        echo "PORT=$port"
+        get_mariadb_credentials h n u p port ssl
+        echo "PORT=$port SSL=$ssl"
     '
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PORT=3306"* ]]
+    [[ "$output" == *"PORT=3306 SSL=false"* ]]
+}
+
+@test "get_environment_hostname_primary strips the surrounding quotes .env writes" {
+    local stub; stub="$(_stub_ssh)"
+    PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'ENVIRONMENT_ID="proj_dev"\nENVIRONMENT_HOSTNAME_PRIMARY="dev.example.com"\n' \
+        run bash -c '
+        set -euo pipefail
+        source "$DDEP"
+        REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=dev
+        echo "value=[$(get_environment_hostname_primary)]"
+    '
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"value=[dev.example.com]"* ]]
+}
+
+@test "get_environment_hostname_primary is best-effort - an ssh failure yields empty, not a script abort" {
+    local stub; stub="$(_stub_ssh)"
+    PATH="$stub:$PATH" SSH_FAIL=true \
+        run bash -c '
+        set -euo pipefail
+        source "$DDEP"
+        REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=dev
+        echo "value=[$(get_environment_hostname_primary)]"
+        echo "reached-after"
+    '
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"value=[]"* ]]
+    [[ "$output" == *"reached-after"* ]]
+}
+
+@test "mariadb_ssl_args adds --skip-ssl unless MARIADB_SSL is true" {
+    run bash -c '
+        source "$DDEP"
+        args=(); mariadb_ssl_args args "false"
+        echo "false=${args[*]-}"
+        args=(); mariadb_ssl_args args ""
+        echo "empty=${args[*]-}"
+        args=(); mariadb_ssl_args args "true"
+        echo "true=${args[*]-}"
+    '
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "false=--skip-ssl" ]
+    [ "${lines[1]}" = "empty=--skip-ssl" ]
+    [ "${lines[2]}" = "true=" ]
 }
 
 # get_container_id needs a real external `docker` stub on PATH (a shell-function
