@@ -770,47 +770,6 @@ resolve_ignore_table_args() {
     done
 }
 
-# Local counterpart to resolve_ignore_table_args, for db:push: resolves
-# exclude_rows/exclude_tables regex patterns against ddev's own local db
-# container instead of a remote host reached over SSH. ASSUMPTIONS THAT NEED
-# VERIFYING AGAINST YOUR OWN ddev SETUP (not tested against a live ddev
-# project - unlike the remote side, there is no equivalent real-instance test
-# for this): ddev's db container's fixed, documented default root credentials
-# (root/root) work unauthenticated for this query; "mysql" is present in the
-# container regardless of whether the project is configured for MySQL or
-# MariaDB (both ship it for compatibility); the database name is "db" (ddev's
-# own fixed default, not project-specific).
-resolve_local_ignore_table_args() {
-    local -n _local_patterns=$1
-    local -n _local_ignore_args=$2
-
-    if [ "${#_local_patterns[@]}" -eq 0 ]; then
-        return 0
-    fi
-
-    local regex
-    regex=$(IFS="|"; echo "${_local_patterns[*]}")
-
-    # DOCKER_HOST='' - see run_yq's own comment on this: by this point the
-    # main script has already exported DOCKER_HOST=ssh://<remote host> for the
-    # remote side, which ddev's own internal docker calls would otherwise
-    # inherit and use instead of the local daemon its db container actually
-    # runs on (confirmed against a real run: ddev-hostname tried to map the
-    # local project's hostname to the *remote* host's IP).
-    local tables
-    tables=$(DOCKER_HOST='' ddev exec -s db -- mysql -uroot -proot -N -e "
-        SELECT TABLE_NAME
-        FROM information_schema.tables
-        WHERE table_schema='db'
-        AND TABLE_NAME REGEXP '${regex}';
-        ")
-
-    local table
-    for table in ${tables}; do
-        _local_ignore_args+=( "--ignore-table=db.${table}" )
-    done
-}
-
 # Allow sourcing (e.g. from tests) to load the functions above without running
 # the CLI below.
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
@@ -1050,7 +1009,7 @@ elif [ "${command}" = "db:import" ]; then
 
     # ddep db:export emits a gzip stream (its two dumps concatenated as a
     # multi-member gzip stream); detect that by magic byte so a plain-SQL dump
-    # piped in some other way (e.g. a raw mysqldump/TYPO3 export) still works,
+    # piped in some other way (e.g. a raw mariadb-dump/TYPO3 export) still works,
     # by compressing it here instead. Either way, the file that crosses the
     # SSH-tunnelled Docker connection below is compressed, not plain SQL.
     if [ "$(head -c2 "${tmpfile}" | od -An -tx1 | tr -d ' \n')" != "1f8b" ]; then
@@ -1078,7 +1037,7 @@ elif [ "${command}" = "db:import" ]; then
     # is still forwarded via -e (not -p), so it never appears in argv either.
     #
     # --force: a dump from anywhere other than this same app's own db:export (a
-    # plain mysqldump, ddev export-db, ...) can contain statements this
+    # plain mariadb-dump, ddev export-db, ...) can contain statements this
     # connection's user can't run as-is - e.g. a view's CREATE carrying a
     # DEFINER from wherever it was dumped, which fails with "Access denied;
     # you need ... SET USER ... privilege" for any other user (confirmed
@@ -1175,27 +1134,39 @@ elif [ "${command}" = "db:pull" ]; then
 
 elif [ "${command}" = "db:push" ]; then
     # A thin local-dev convenience wrapper, the reverse of db:pull: dumps the
-    # local ddev project's database directly from its db container - bypassing
-    # `ddev export-db`, which has no way to skip specific tables - applying
-    # this project's own exclude_rows/exclude_tables (same semantics as
-    # db:export: rows-only vs. dropped entirely), then pipes the result into
-    # db:import against the remote host/environment. --force/--debug are
-    # forwarded to that child invocation (which is what actually prompts for
-    # confirmation), not consumed here.
+    # local ddev project's database via `ddev export-db` (its normal full
+    # dump - ddev's own internal db-container access, so no separate
+    # credential/binary-name assumptions of our own), applying this project's
+    # own exclude_rows/exclude_tables by filtering the dump *text* rather than
+    # asking ddev to skip tables at dump time (it has no such option).
     #
-    # See resolve_local_ignore_table_args's own comment for the ddev-specific
-    # assumptions (root/root credentials, mysql binary, "db" database name)
-    # this relies on - unverified against a live ddev project.
+    # An earlier version bypassed `ddev export-db` and ran `mariadb-dump`
+    # directly inside ddev's db container via `ddev exec`, resolving matching
+    # table names as --ignore-table args exactly like db:export does for the
+    # remote side. That failed against a real project - the database name
+    # argument never reached mariadb-dump ("No database selected"), meaning
+    # `ddev exec -s db -- sh -c '...' sh arg1 arg2 ...`'s trailing args don't
+    # reach the inner script's "$@" the way `docker exec`'s do. Filtering the
+    # dump text sidesteps that entirely.
+    #
+    # The filter matches mariadb-dump's own comment markers
+    # ("-- Table structure for table `x`", "-- Dumping data for table `x`",
+    # "-- Temporary/Final table structure for view `x`") to find each
+    # table/view's structure and data sections. exclude_tables suppresses
+    # both (dropped entirely); exclude_rows suppresses only the data section
+    # (schema kept). Verified end to end against a real dump: filtered output
+    # re-imports cleanly, a rows-excluded table exists but empty, a
+    # tables-excluded view is entirely absent.
+    #
+    # --force/--debug are forwarded to the db:import child invocation (which
+    # is what actually prompts for confirmation), not consumed here.
     if ! command -v ddev >/dev/null 2>&1; then
         echo "Error: db:push requires ddev on PATH (only db:import does not)." >&2
         exit 1
     fi
 
-    rows_ignore_args=()
-    resolve_local_ignore_table_args DB_EXCLUDE_ROWS rows_ignore_args
-
-    tables_ignore_args=()
-    resolve_local_ignore_table_args DB_EXCLUDE_TABLES tables_ignore_args
+    rows_regex=$(IFS="|"; echo "${DB_EXCLUDE_ROWS[*]}")
+    tables_regex=$(IFS="|"; echo "${DB_EXCLUDE_TABLES[*]}")
 
     import_args=()
     [[ "${FORCE}" == "true" ]] && import_args+=("--force")
@@ -1203,11 +1174,26 @@ elif [ "${command}" = "db:push" ]; then
     import_args+=("db:import" "${host}" "${target_env}")
 
     # DOCKER_HOST='' - see db:pull's own comment on this; same reasoning.
-    (
-        DOCKER_HOST='' ddev exec -s db -- sh -c 'mysqldump -uroot -proot --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
-            sh "${tables_ignore_args[@]}" db
-
-        DOCKER_HOST='' ddev exec -s db -- sh -c 'mysqldump -uroot -proot --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
-            sh "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" db
-    ) | gzip -dc | "$0" "${import_args[@]}"
+    DOCKER_HOST='' ddev export-db | gzip -dc | awk -v exclude_rows="${rows_regex}" -v exclude_tables="${tables_regex}" '
+        BEGIN { suppress = 0 }
+        /^-- Table structure for table `/ || /^-- Temporary table structure for view `/ {
+            name = $0
+            sub(/^-- (Table structure for table|Temporary table structure for view) `/, "", name)
+            sub(/`.*/, "", name)
+            suppress = (exclude_tables != "" && name ~ exclude_tables)
+        }
+        /^-- Dumping data for table `/ {
+            name = $0
+            sub(/^-- Dumping data for table `/, "", name)
+            sub(/`.*/, "", name)
+            suppress = (exclude_tables != "" && name ~ exclude_tables) || (exclude_rows != "" && name ~ exclude_rows)
+        }
+        /^-- Final view structure for view `/ {
+            name = $0
+            sub(/^-- Final view structure for view `/, "", name)
+            sub(/`.*/, "", name)
+            suppress = (exclude_tables != "" && name ~ exclude_tables)
+        }
+        { if (!suppress) print }
+    ' | "$0" "${import_args[@]}"
 fi

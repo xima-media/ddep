@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   misread as a new statement, or even as one of the `mariadb` CLI's own
   backslash meta-commands).
 - `db:import` imports with `mariadb --force` - a dump from anywhere other than
-  this same app's own `db:export` (a plain mysqldump, `ddev export-db`, ...) can
+  this same app's own `db:export` (a plain mariadb-dump, `ddev export-db`, ...) can
   carry a statement this connection's user can't run as-is, e.g. a view's
   `CREATE` with a `DEFINER` from wherever it was dumped, which fails with
   "Access denied; you need ... SET USER ... privilege" for any other user.
@@ -117,13 +117,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   straight into `ddev import-db` for the ddev project in the current working
   directory. Requires `ddev` on `PATH`.
 - `db:push [host] [environment]` - the reverse of `db:pull`: dumps the local
-  ddev project's database (bypassing `ddev export-db`, which has no way to
-  skip specific tables, in favor of running `mysqldump` directly inside ddev's
-  own db container) applying this project's own `exclude_rows`/`exclude_tables`
-  - same semantics as `db:export` - then pipes the result into `db:import`
-  against the remote. Requires `ddev` on `PATH`. Relies on ddev's fixed,
-  documented default db-container credentials (`root`/`root`) and database
-  name (`db`) - not yet verified against a live ddev project.
+  ddev project's database via `ddev export-db`, then applies this project's
+  own `exclude_rows`/`exclude_tables` (same semantics as `db:export`) by
+  filtering the dump *text* - matching mariadb-dump's own comment markers to
+  find each table/view's structure and data sections, since `ddev export-db`
+  has no table-exclusion option of its own - then pipes the result into
+  `db:import` against the remote. Requires `ddev` on `PATH`. Verified end to
+  end against a real dump: filtered output re-imports cleanly, a
+  rows-excluded table exists but empty, a tables-excluded view is entirely
+  absent. (An earlier version bypassed `ddev export-db` and ran
+  `mariadb-dump` directly inside ddev's db container via `ddev exec` instead
+  - abandoned after a real run showed `ddev exec`'s trailing arguments don't
+  reach the inner script's `"$@"` the way `docker exec`'s do, so the database
+  name never reached mariadb-dump.)
 - `exec <host> <environment> <command>` - run a command in the remote
   container, split out from `ssh` (see Changed).
 - Reads `.docker/hosts.yaml` via a pinned `mikefarah/yq` Docker image
