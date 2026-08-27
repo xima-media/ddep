@@ -163,28 +163,44 @@ STUB
 
 @test "get_mariadb_credentials reads the canonical MARIADB_* names, not per-app ones" {
     local stub; stub="$(_stub_ssh)"
-    PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'MARIADB_HOST=10.0.0.8\nMARIADB_DBNAME=mydb\nMARIADB_USER=myuser\nMARIADB_PASSWORD=mypass\nMARIADB_PORT=3307\nSYMFONY_DATABASE_HOST=should-be-ignored\n' \
+    PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'MARIADB_HOST=10.0.0.8\nMARIADB_DBNAME=mydb\nMARIADB_USER=myuser\nMARIADB_PASSWORD=mypass\nMARIADB_PORT=3307\nMARIADB_SSL=true\nSYMFONY_DATABASE_HOST=should-be-ignored\n' \
         run bash -c '
         source "$DDEP"
         REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=staging
-        get_mariadb_credentials h n u p port
-        echo "HOST=$h NAME=$n USER=$u PASS=$p PORT=$port"
+        get_mariadb_credentials h n u p port ssl
+        echo "HOST=$h NAME=$n USER=$u PASS=$p PORT=$port SSL=$ssl"
     '
     [ "$status" -eq 0 ]
-    [[ "$output" == *"HOST=10.0.0.8 NAME=mydb USER=myuser PASS=mypass PORT=3307"* ]]
+    [[ "$output" == *"HOST=10.0.0.8 NAME=mydb USER=myuser PASS=mypass PORT=3307 SSL=true"* ]]
 }
 
-@test "get_mariadb_credentials defaults the port to 3306 when unset" {
+@test "get_mariadb_credentials defaults the port to 3306 and ssl to false when unset" {
     local stub; stub="$(_stub_ssh)"
     PATH="$stub:$PATH" SSH_CAT_OUTPUT=$'MARIADB_HOST=10.0.0.8\nMARIADB_DBNAME=mydb\nMARIADB_USER=myuser\nMARIADB_PASSWORD=mypass\n' \
         run bash -c '
         source "$DDEP"
         REMOTE_DOCKER_HOST=dummy; COMPOSE_PROJECTS_ROOT=/opt; git_project_name=proj; target_env=staging
-        get_mariadb_credentials h n u p port
-        echo "PORT=$port"
+        get_mariadb_credentials h n u p port ssl
+        echo "PORT=$port SSL=$ssl"
     '
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PORT=3306"* ]]
+    [[ "$output" == *"PORT=3306 SSL=false"* ]]
+}
+
+@test "mariadb_ssl_args adds --skip-ssl unless MARIADB_SSL is true" {
+    run bash -c '
+        source "$DDEP"
+        args=(); mariadb_ssl_args args "false"
+        echo "false=${args[*]-}"
+        args=(); mariadb_ssl_args args ""
+        echo "empty=${args[*]-}"
+        args=(); mariadb_ssl_args args "true"
+        echo "true=${args[*]-}"
+    '
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "false=--skip-ssl" ]
+    [ "${lines[1]}" = "empty=--skip-ssl" ]
+    [ "${lines[2]}" = "true=" ]
 }
 
 # get_container_id needs a real external `docker` stub on PATH (a shell-function

@@ -101,6 +101,17 @@ credentials themselves are read from a fixed set of env var names
 every app - see [Security](#security). `ddep` derives its own connection info
 from this file:
 
+`MARIADB_SSL` (`true`/`false`, optional in that same file - defaults to
+`false`) controls only whether `--skip-ssl` is passed to every `mariadb`/
+`mariadb-dump` call: `false` disables SSL outright (suppresses the client's
+"option --ssl-verify-server-cert is disabled, because of an insecure
+passwordless login" warning, which fires by default since these connections
+carry no CA config to verify a certificate against); `true` leaves the
+client's own default (opportunistic SSL, verification still silently
+disabled the same way) alone rather than forcing anything further - genuine
+certificate verification would additionally need `--ssl-ca`, not supported
+by `ddep` today.
+
 - `app` ← `all.vars.app_name`
 - every host is addressable by its own hosts.yaml key as the `host` argument —
   e.g. `ddep ssh customer_a` for one of several hosts under a `live` group

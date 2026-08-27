@@ -113,6 +113,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `MARIADB_SSL` (`true`/`false`, optional in `.app.env.provision`, defaults to
+  `false`): controls whether `--skip-ssl` is passed to every `mariadb`/
+  `mariadb-dump` call (`db:import`/`db:export`, and the `exclude_rows`/
+  `exclude_tables` table-name lookup). `false` disables SSL outright,
+  suppressing the "option --ssl-verify-server-cert is disabled, because of an
+  insecure passwordless login" warning these connections otherwise print by
+  default (no CA config to verify a certificate against); `true` leaves the
+  client's own default opportunistic-SSL behavior alone rather than forcing
+  anything further - genuine certificate verification would additionally need
+  `--ssl-ca`, not supported yet.
 - `db:pull [host] [environment]` - a thin wrapper around `db:export`, piped
   straight into `ddev import-db` for the ddev project in the current working
   directory. Requires `ddev` on `PATH`.

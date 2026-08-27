@@ -540,6 +540,7 @@ get_mariadb_credentials() {
     local -n _mariadb_user=$3
     local -n _mariadb_password=$4
     local -n _mariadb_port=$5
+    local -n _mariadb_ssl=$6
 
     local environment_file_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}/.app.env.provision"
 
@@ -562,11 +563,35 @@ get_mariadb_credentials() {
     _mariadb_user=$(get_env_value "MARIADB_USER" <<< "${env_content}")
     _mariadb_password=$(get_env_value "MARIADB_PASSWORD" <<< "${env_content}")
     _mariadb_port=$(get_env_value "MARIADB_PORT" <<< "${env_content}")
+    _mariadb_ssl=$(get_env_value "MARIADB_SSL" <<< "${env_content}")
 
     _mariadb_port=${_mariadb_port:-3306}
+    _mariadb_ssl=${_mariadb_ssl:-false}
 
     if [[ "${DEBUG}" == "true" ]]; then
         set -x
+    fi
+}
+
+# Populates the nameref array with ["--skip-ssl"] unless MARIADB_SSL=true, else
+# leaves it empty - an array, not a plain string, so it splices cleanly via
+# "${_ssl_args[@]}" into a "$@"-forwarded argument list (zero elements
+# contribute nothing, unlike an empty-string variable, which would land as a
+# stray blank positional and shift every argument after it).
+#
+# The mariadb/mariadb-dump client already attempts SSL by default (with
+# certificate verification silently disabled for a passwordless connection,
+# the source of the "option --ssl-verify-server-cert is disabled" warning seen
+# throughout this project's dumps/imports), so MARIADB_SSL=true here means
+# "leave that default alone" rather than forcing anything further - real
+# verification would additionally need --ssl-ca, not added here since no
+# environment has needed it yet.
+mariadb_ssl_args() {
+    local -n _ssl_args=$1
+    if [[ "$2" != "true" ]]; then
+        _ssl_args=("--skip-ssl")
+    else
+        _ssl_args=()
     fi
 }
 
@@ -736,7 +761,7 @@ confirm_destructive() {
 resolve_ignore_table_args() {
     local -n _patterns=$1
     local -n _ignore_args=$2
-    local db_host="$3" db_port="$4" db_user="$5" db_password="$6" db_name="$7"
+    local db_host="$3" db_port="$4" db_user="$5" db_password="$6" db_name="$7" db_ssl="$8"
 
     if [ "${#_patterns[@]}" -eq 0 ]; then
         return 0
@@ -745,6 +770,9 @@ resolve_ignore_table_args() {
     # Convert JSON regex array into MariaDB REGEXP expression
     local regex
     regex=$(IFS="|"; echo "${_patterns[*]}")
+
+    local -a ssl_args
+    mariadb_ssl_args ssl_args "${db_ssl}"
 
     # MYSQL_PWD is exported with tracing disabled so --debug never echoes it,
     # and forwarded via -e (not -p) so it never appears in argv either.
@@ -757,6 +785,7 @@ resolve_ignore_table_args() {
             --host '${db_host}' \
             --port '${db_port}' \
             --user '${db_user}' \
+            ${ssl_args[*]-} \
             -N -e \"
             SELECT TABLE_NAME
             FROM information_schema.tables
@@ -1026,8 +1055,10 @@ elif [ "${command}" = "db:import" ]; then
 
     confirm_destructive "overwrite the remote database and run migrations"
 
-    get_mariadb_credentials db_host db_name db_user db_password db_port
+    get_mariadb_credentials db_host db_name db_user db_password db_port db_ssl
     ensure_mariadb_image
+    ssl_args=()
+    mariadb_ssl_args ssl_args "${db_ssl}"
 
     # Send the compressed dump as-is and gunzip it inside the container, so the
     # SSH-tunnelled Docker connection carries compressed bytes instead of plain
@@ -1053,8 +1084,8 @@ elif [ "${command}" = "db:import" ]; then
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
         docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'gunzip -c | mariadb --force --default-character-set=utf8mb4 --host="$1" --port="$2" --user="$3" "$4"' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${db_name}" \
+            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; gunzip -c | mariadb --force --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" "$@"' \
+            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${db_name}" \
             < "${tmpfile}"
     )
 
@@ -1074,18 +1105,20 @@ elif [ "${command}" = "db:import" ]; then
     fi
 
 elif [ "${command}" = "db:export" ]; then
-    get_mariadb_credentials db_host db_name db_user db_password db_port
+    get_mariadb_credentials db_host db_name db_user db_password db_port db_ssl
     ensure_mariadb_image
+    ssl_args=()
+    mariadb_ssl_args ssl_args "${db_ssl}"
 
     # exclude_rows: schema kept, only rows skipped - applied to the data dump only.
     # exclude_tables: dropped entirely - applied to both the structure and data dump.
     rows_ignore_args=()
     resolve_ignore_table_args DB_EXCLUDE_ROWS rows_ignore_args \
-        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}"
+        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
 
     tables_ignore_args=()
     resolve_ignore_table_args DB_EXCLUDE_TABLES tables_ignore_args \
-        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}"
+        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
 
     # --default-character-set=utf8mb4 on every mariadb/mariadb-dump call (here and in
     # db:import below): without it, the client library's own default (latin1) silently
@@ -1105,11 +1138,11 @@ elif [ "${command}" = "db:export" ]; then
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
             sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${tables_ignore_args[@]}" "${db_name}"
+            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
 
         docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
             sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
+            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
     )
 
 elif [ "${command}" = "db:pull" ]; then
