@@ -715,7 +715,7 @@ select_env() {
     fi
 
     if [[ -n "${invalid_env}" ]]; then
-        echo "Environment '${invalid_env}' not found on host '${host}' - did you mean one of these?" >&2
+        echo "${COLOR_YELLOW}Environment '${invalid_env}' not found on host '${host}' - did you mean one of these?${COLOR_RESET}" >&2
     else
         echo "Select environment on ${host}:" >&2
     fi
@@ -747,7 +747,7 @@ select_host() {
         exit 1
     fi
 
-    echo "Host '${host}' not found - did you mean one of these?" >&2
+    echo "${COLOR_YELLOW}Host '${host}' not found - did you mean one of these?${COLOR_RESET}" >&2
 
     PS3="Host: "
     select h in "${hosts[@]}"; do
