@@ -936,7 +936,7 @@ while [[ $# -gt 0 && -z "${command}" ]]; do
     esac
 done
 if [ -z "${command}" ]; then
-    echo "No command provided. Use one of: media:push, media:pull, ssh, exec, db:import, db:export, db:push, db:pull, logs, config, info" >&2
+    usage >&2
     exit 1
 fi
 

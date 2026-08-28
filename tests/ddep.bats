@@ -24,10 +24,10 @@ setup() {
     [[ "$output" == *"Usage:"* ]]
 }
 
-@test "no command exits 1 with guidance" {
+@test "no command exits 1 with usage" {
     run "$DDEP"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"No command provided"* ]]
+    [[ "$output" == *"Usage:"* ]]
 }
 
 @test "unknown argument exits 1" {
