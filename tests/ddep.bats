@@ -140,6 +140,18 @@ setup() {
     [ -z "$output" ]
 }
 
+@test "get_env_value keeps '=' inside the value" {
+    run bash -c 'source "$DDEP"; printf "K=has=equals\n" | get_env_value K'
+    [ "$status" -eq 0 ]
+    [ "$output" = "has=equals" ]
+}
+
+@test "get_env_value preserves base64 padding in a value" {
+    run bash -c 'source "$DDEP"; printf "DB_PASS=c2VjcmV0cGFzcw==\n" | get_env_value DB_PASS'
+    [ "$status" -eq 0 ]
+    [ "$output" = "c2VjcmV0cGFzcw==" ]
+}
+
 # get_mariadb_credentials needs a real external `ssh` stub on PATH (same reason
 # as _stub_docker below - a shell-function stub isn't found the same way).
 # Responds to the two remote calls the function makes: "test -f ..." (file

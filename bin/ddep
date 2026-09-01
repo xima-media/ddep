@@ -535,7 +535,10 @@ parse_config_json() {
 }
 
 get_env_value() {
-    awk -F= -v key="$1" '$1 == key {print $2}'
+    # Print everything after the first "=" so values that themselves contain "="
+    # (e.g. base64 padding in a password) are returned intact rather than
+    # truncated at the first field.
+    awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); print }'
 }
 
 # Best-effort: never fails, even if .env is missing or ENVIRONMENT_HOSTNAME_PRIMARY
