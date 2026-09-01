@@ -40,7 +40,7 @@ require it as a dev dependency:
 ```
 
 ```sh
-composer require --dev xima-media/ddep:^1.0
+composer require --dev xima/ddep:^1.0
 ```
 
 This exposes the binary as `vendor/bin/ddep`. Releases are cut as git tags, so
