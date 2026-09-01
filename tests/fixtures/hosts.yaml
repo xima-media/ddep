@@ -1,0 +1,23 @@
+all:
+  vars:
+    app_name: symfony
+    compose_projects_root: /opt/docker/compose
+  children:
+    dev:
+      hosts:
+        shared:
+          ansible_host: dev-host
+          ansible_user: dev-user
+    test:
+      hosts:
+        test:
+          ansible_host: test-host
+          ansible_user: test-user
+    live:
+      hosts:
+        customer_a:
+          ansible_host: customer-a-host
+          ansible_user: customer-a-user
+        customer_b:
+          ansible_host: customer-b-host
+          ansible_user: customer-b-user

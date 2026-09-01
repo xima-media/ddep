@@ -1,0 +1,10 @@
+all:
+  vars:
+    app_name: typo3
+    compose_projects_root: /srv/apps
+  children:
+    dev:
+      hosts:
+        shared:
+          ansible_host: dev-host
+          ansible_user: dev-user

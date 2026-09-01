@@ -1,10 +1,4 @@
 {
-	"app": "symfony",
-	"hosts": {
-		"dev": "user@dev-host",
-		"test": "user@test-host",
-		"live": "user@live-host"
-	},
 	"settings": {
 		"symfony": {
 			"db": {
