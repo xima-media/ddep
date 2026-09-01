@@ -1278,7 +1278,12 @@ elif [ "${command}" = "db:push" ]; then
     import_args+=("db:import" "${host}" "${target_env}")
 
     # DOCKER_HOST='' - see db:pull's own comment on this; same reasoning.
-    DOCKER_HOST='' ddev export-db | gzip -dc | awk -v exclude_rows="${rows_regex}" -v exclude_tables="${tables_regex}" '
+    # LC_ALL=C - the dump carries raw bytes (BLOBs, gzipped cache payloads,
+    # latin1 columns) that are not valid UTF-8; macOS' BWK awk aborts with
+    # "towc: multibyte conversion failure" mid-stream and would hand a
+    # truncated dump to db:import. The markers matched below are pure ASCII,
+    # so byte-wise processing is equivalent and safe.
+    DOCKER_HOST='' ddev export-db | gzip -dc | LC_ALL=C awk -v exclude_rows="${rows_regex}" -v exclude_tables="${tables_regex}" '
         BEGIN { suppress = 0 }
         /^-- Table structure for table `/ || /^-- Temporary table structure for view `/ {
             name = $0
