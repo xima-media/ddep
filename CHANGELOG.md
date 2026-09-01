@@ -169,7 +169,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tool name ("yq") that resolves to two different, incompatible programs
   depending on the platform's package manager (Debian/Ubuntu's `apt install
   yq` is an unrelated tool from macOS Homebrew's).
-- Distribution as a composer package (`xima-media/ddep`), exposing `vendor/bin/ddep`.
+- Distribution as a composer package (`xima/ddep`), exposing `vendor/bin/ddep`.
 - `logs` command to follow the remote application container's log output.
 - `-h`/`--help` and `-V`/`--version` flags.
 - `--force` flag plus confirmation prompts before destructive remote writes
