@@ -253,7 +253,7 @@ doesn't affect the other.
 |---------|--------------|
 | `media:push [host] [env]` | Push local media files to the remote application container |
 | `media:pull [host] [env]` | Pull media files from the remote application container |
-| `db:import [host] [env]` | Import a database dump (read from stdin, plain SQL or gzip) into the remote database, then run the application's DB migration |
+| `db:import [host] [env]` | Drop all tables/views in the remote database, import a database dump (read from stdin, plain SQL or gzip) into it, then run the application's DB migration |
 | `db:export [host] [env]` | Export the remote database to stdout, gzip-compressed |
 | `db:pull [host] [env]` | Local-dev convenience wrapper: `db:export` piped into `ddev import-db` for the ddev project in the current working directory. Requires `ddev` on `PATH` |
 | `db:push [host] [env]` | Local-dev convenience wrapper, the reverse of `db:pull`: dumps the local ddev project's database (same `exclude_rows`/`exclude_tables` filtering as `db:export`) and pipes it into `db:import`. Requires `ddev` on `PATH` |
@@ -358,6 +358,10 @@ Weigh this before rolling it out:
 - **Reduce blast radius.** Consider fronting the daemon with a
   [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) that
   exposes only the API endpoints ddep needs, or rootless Docker on the host.
+- **`db:import` drops every table/view in the remote database first.** Tables
+  that exist only in the target are gone afterwards, and a partial dump (e.g. a
+  single table) leaves only what it contains. Tables/views in `exclude_tables`
+  must be recreated by the application's `db.migration`.
 - **`db:import`/`media:push` overwrite remote data.** They prompt for confirmation
   (type the host slug on non-`dev` hosts); `--force` bypasses that, so treat
   `--force` against a non-`dev` host as a privileged operation.

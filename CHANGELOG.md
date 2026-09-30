@@ -55,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `db:import` (and therefore `db:push`) now drops every
+  table/view in the target database before importing. A dump only replaces
+  the tables it contains, so tables that existed only in the target - e.g.
+  created by a newer branch's code - survived the import while the dump's
+  migration history didn't know about them, and the post-import migration
+  failed with "Table ... already exists". Migration: a partial dump (e.g. a
+  single table) now leaves only what it contains, and tables/views in
+  `exclude_tables` must be recreated by `db.migration`.
 - **Breaking:** `--host`/`--env` are gone; host and environment are now
   positional, after the command (`ddep db:import dev feature_xyz`, not `ddep
   --host dev --env feature_xyz db:import`). Both stay optional everywhere they

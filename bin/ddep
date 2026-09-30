@@ -78,10 +78,11 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # Commands:
 #   media:push [host] [env]  Push local media files to the remote application container
 #   media:pull [host] [env]  Pull media files from the remote application container
-#   db:import [host] [env]   Import a database dump (read from stdin) into the remote
-#                             database, then run the application's DB migration. A
-#                             gzip-compressed stream is detected and passed through;
-#                             plain SQL is gzip-compressed here before it is sent.
+#   db:import [host] [env]   Drop all tables/views in the remote database, import a
+#                             database dump (read from stdin) into it, then run the
+#                             application's DB migration. A gzip-compressed stream is
+#                             detected and passed through; plain SQL is
+#                             gzip-compressed here before it is sent.
 #   db:export [host] [env]   Export the remote database to stdout as a gzip stream.
 #                             db.exclude_rows tables keep their schema but skip rows;
 #                             db.exclude_tables tables/views are dropped entirely.
@@ -177,8 +178,8 @@ Usage: ddep [options] <command> [host] [environment]
 Commands:
   media:push [host] [env]  Push local media files to the remote application container
   media:pull [host] [env]  Pull media files from the remote application container
-  db:import [host] [env]   Import a database dump (stdin, plain SQL or gzip) into
-                            the remote DB, then migrate
+  db:import [host] [env]   Drop all remote tables/views, import a database dump
+                            (stdin, plain SQL or gzip), then migrate
   db:export [host] [env]   Export the remote database to stdout, gzip-compressed
   db:pull [host] [env]     db:export piped into `ddev import-db` (requires ddev)
   db:push [host] [env]     Local ddev database dump piped into db:import (requires ddev)
@@ -1142,7 +1143,7 @@ elif [ "${command}" = "db:import" ]; then
         exit 1
     fi
 
-    confirm_destructive "overwrite the remote database and run migrations"
+    confirm_destructive "drop all tables/views in the remote database, import the dump and run migrations"
 
     get_mariadb_credentials db_host db_name db_user db_password db_port db_ssl
     ensure_mariadb_image
@@ -1169,12 +1170,23 @@ elif [ "${command}" = "db:import" ]; then
     # (not just continuing past the error, but not failing this whole
     # subshell either), so it doesn't trip this script's own set -e before
     # reaching the migration step.
+    #
+    # Every table/view is dropped first: a dump only replaces the tables it
+    # contains, so tables that exist only in the target (e.g. created by a
+    # newer branch's code or migration) would otherwise survive while the
+    # dump's migration history no longer knows about them, and the migration
+    # below fails with "Table ... already exists". The drop runs without
+    # --force and under set -e, so a failed drop aborts before the import.
+    drop_query="SELECT CONCAT('DROP ', IF(TABLE_TYPE = 'VIEW', 'VIEW', 'TABLE'), ' IF EXISTS \`', REPLACE(TABLE_NAME, '\`', '\`\`'), '\`;') FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()"
     (
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
         docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; gunzip -c | mariadb --force --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" "$@"' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${db_name}" \
+            sh -c 'set -e; h="$1"; p="$2"; u="$3"; q="$4"; shift 4
+                drops=$(mariadb --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --skip-column-names --batch --raw --execute="$q" "$@")
+                printf "%s\n" "SET FOREIGN_KEY_CHECKS=0;" "$drops" | mariadb --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" "$@"
+                gunzip -c | mariadb --force --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" "$@"' \
+            sh "${db_host}" "${db_port}" "${db_user}" "${drop_query}" "${ssl_args[@]}" "${db_name}" \
             < "${tmpfile}"
     )
 
