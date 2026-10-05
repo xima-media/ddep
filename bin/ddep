@@ -35,7 +35,7 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #     to the FIRST host declared under that group (file order) - not reliable for
 #     targeting one specific host once a group has more than one.
 # See .docker/hosts.yaml's format (an Ansible inventory) in
-# docker-compose-deploy's README ("Multi-host test/live").
+# docker-compose-deploy's docs/configuration.md ("hosts.yaml").
 #
 # .docker/ddep.json is optional, scoped only to per-application setting overrides:
 # {
