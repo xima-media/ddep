@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the environment's docker compose project directory
   (`<compose_projects_root>/<project>_<env>`), e.g. to inspect `.env` or run
   `docker compose` there directly.
+- `ssh` falls back to `sh` in containers without `bash`.
 
 ### Fixed
 

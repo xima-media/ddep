@@ -1094,7 +1094,7 @@ elif [ "${command}" = "ssh" ]; then
     if [ -t 0 ] && [ -t 1 ]; then
         exec_flags="-it"
     fi
-    docker exec "${exec_flags}" "${container_id}" /bin/bash
+    docker exec "${exec_flags}" "${container_id}" /bin/sh -c 'if command -v bash >/dev/null 2>&1; then exec bash; fi; exec sh'
 
 elif [ "${command}" = "host" ]; then
     environment_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}"
