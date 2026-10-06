@@ -1097,13 +1097,8 @@ elif [ "${command}" = "ssh" ]; then
     docker exec "${exec_flags}" "${container_id}" /bin/bash
 
 elif [ "${command}" = "host" ]; then
-    # Only allocate a TTY (-t) when running interactively, same as ssh/exec.
-    ssh_flags=()
-    if [ -t 0 ] && [ -t 1 ]; then
-        ssh_flags=(-t)
-    fi
     environment_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}"
-    ssh "${ssh_flags[@]}" "${REMOTE_DOCKER_HOST}" "cd $(printf '%q' "${environment_path}") && exec \"\${SHELL:-/bin/sh}\" -l"
+    ssh -t "${REMOTE_DOCKER_HOST}" "cd $(printf '%q' "${environment_path}") && exec \"\${SHELL:-/bin/sh}\" -l"
 
 elif [ "${command}" = "exec" ]; then
     if ! get_container_id container_id; then
