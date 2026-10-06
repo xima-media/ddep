@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `host [host] [env]` opens an interactive shell on the remote docker host,
+  in the environment's docker compose project directory
+  (`<compose_projects_root>/<project>_<env>`), e.g. to inspect `.env` or run
+  `docker compose` there directly.
+- `ssh` and `exec` fall back to `sh` in containers without `bash`.
+
 ### Fixed
 
 - `db:import` (and therefore `db:push`) now drops every table/view in the

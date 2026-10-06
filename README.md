@@ -258,6 +258,7 @@ doesn't affect the other.
 | `db:pull [host] [env]` | Local-dev convenience wrapper: `db:export` piped into `ddev import-db` for the ddev project in the current working directory. Requires `ddev` on `PATH` |
 | `db:push [host] [env]` | Local-dev convenience wrapper, the reverse of `db:pull`: dumps the local ddev project's database (same `exclude_rows`/`exclude_tables` filtering as `db:export`) and pipes it into `db:import`. Requires `ddev` on `PATH` |
 | `ssh [host] [env]` | Open an interactive shell inside the remote container |
+| `host [host] [env]` | Open an interactive shell on the remote docker host, in the environment's docker compose project directory (`<compose_projects_root>/<project>_<env>`) |
 | `exec <host> <env> <cmd>` | Execute a command inside the remote container - all three are required, and `cmd` should be quoted as one argument if it contains spaces |
 | `logs [host] [env]` | Follow the remote application container's log output |
 | `config` | Print the resolved configuration (built-in defaults, `.docker/hosts.yaml`, and `.docker/ddep.json`, all deep-merged together) as JSON - takes no arguments |
@@ -308,6 +309,9 @@ ddep media:push dev feature_xyz
 
 # Open an interactive shell in the dev application container
 ddep ssh dev
+
+# Open a shell on the dev docker host, in the environment's project directory
+ddep host dev feature_xyz
 
 # Execute a command inside the dev application container
 ddep exec dev feature_xyz "vendor/bin/typo3 list"

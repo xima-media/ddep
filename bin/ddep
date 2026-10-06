@@ -96,6 +96,8 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #                             as db:export) and pipes it into db:import against
 #                             the remote. Requires ddev on PATH.
 #   ssh [host] [env]         Open an interactive shell inside the remote container
+#   host [host] [env]        Open an interactive shell on the remote docker host, in
+#                             the environment's docker compose project directory
 #   exec <host> <env> <cmd>  Execute a command inside the remote container (quote
 #                             it as one argument if it contains spaces)
 #   logs [host] [env]        Follow the remote application container's log output
@@ -137,6 +139,9 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #
 #   # Open an interactive shell in the dev application container
 #   ddep ssh dev
+#
+#   # Open a shell on the dev docker host, in the environment's project directory
+#   ddep host dev feature_xyz
 #
 #   # Execute a command inside the dev application container
 #   ddep exec dev feature_xyz "vendor/bin/typo3 list"
@@ -184,6 +189,8 @@ Commands:
   db:pull [host] [env]     db:export piped into `ddev import-db` (requires ddev)
   db:push [host] [env]     Local ddev database dump piped into db:import (requires ddev)
   ssh [host] [env]         Open an interactive shell in the remote container
+  host [host] [env]        Open an interactive shell on the remote docker host,
+                            in the environment's compose project directory
   exec <host> <env> <cmd>  Run a command in the remote container (quote it as
                             one argument if it contains spaces)
   logs [host] [env]        Follow the remote application container's log output
@@ -929,7 +936,7 @@ while [[ $# -gt 0 && -z "${command}" ]]; do
             FORCE=true
             shift
             ;;
-        media:push|media:pull|db:import|db:export|db:push|db:pull|logs|config|info|ssh|exec)
+        media:push|media:pull|db:import|db:export|db:push|db:pull|logs|config|info|ssh|host|exec)
             command="$1"
             shift
             ;;
@@ -1087,7 +1094,11 @@ elif [ "${command}" = "ssh" ]; then
     if [ -t 0 ] && [ -t 1 ]; then
         exec_flags="-it"
     fi
-    docker exec "${exec_flags}" "${container_id}" /bin/bash
+    docker exec "${exec_flags}" "${container_id}" /bin/sh -c 'if [ -x /bin/bash ]; then exec /bin/bash; fi; exec /bin/sh'
+
+elif [ "${command}" = "host" ]; then
+    environment_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}"
+    ssh -t "${REMOTE_DOCKER_HOST}" "cd '${environment_path}' && exec \"\$SHELL\" -l"
 
 elif [ "${command}" = "exec" ]; then
     if ! get_container_id container_id; then
@@ -1099,7 +1110,7 @@ elif [ "${command}" = "exec" ]; then
     if [ -t 0 ] && [ -t 1 ]; then
         exec_flags="-it"
     fi
-    docker exec "${exec_flags}" "${container_id}" /bin/bash -c "${exec_command}"
+    docker exec "${exec_flags}" "${container_id}" /bin/sh -c 'if [ -x /bin/bash ]; then exec /bin/bash -c "$1"; fi; exec /bin/sh -c "$1"' sh "${exec_command}"
 
 elif [ "${command}" = "logs" ]; then
     if ! get_container_id container_id; then
