@@ -59,6 +59,12 @@ setup() {
     [[ "$output" == *"expected at most <host> <environment>"* ]]
 }
 
+@test "host rejects more than two positional arguments" {
+    run "$DDEP" host dev dwis-3442 extra
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"expected at most <host> <environment>"* ]]
+}
+
 @test "exec requires exactly host, environment, and command" {
     run "$DDEP" exec dev
     [ "$status" -eq 1 ]
