@@ -1098,7 +1098,7 @@ elif [ "${command}" = "ssh" ]; then
 
 elif [ "${command}" = "host" ]; then
     environment_path="${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}"
-    ssh -t "${REMOTE_DOCKER_HOST}" "cd '${environment_path//\'/\'\\\'\'}' && exec \"\$SHELL\" -l"
+    ssh -t "${REMOTE_DOCKER_HOST}" "cd '${environment_path}' && exec \"\$SHELL\" -l"
 
 elif [ "${command}" = "exec" ]; then
     if ! get_container_id container_id; then
