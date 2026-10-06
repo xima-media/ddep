@@ -1110,7 +1110,7 @@ elif [ "${command}" = "exec" ]; then
     if [ -t 0 ] && [ -t 1 ]; then
         exec_flags="-it"
     fi
-    docker exec "${exec_flags}" "${container_id}" /bin/bash -c "${exec_command}"
+    docker exec "${exec_flags}" "${container_id}" /bin/sh -c 'if command -v bash >/dev/null 2>&1; then exec bash -c "$1"; fi; exec sh -c "$1"' sh "${exec_command}"
 
 elif [ "${command}" = "logs" ]; then
     if ! get_container_id container_id; then
