@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `db:export`/`db:import` (and therefore `db:pull`/`db:push`) now resolve
+  `MARIADB_HOST=host.docker.internal`, which a project uses when MariaDB runs
+  on the docker host itself. The temporary `mariadb` container now gets the
+  same `host.docker.internal:host-gateway` mapping as the app container;
+  before, it failed with "Unknown server host 'host.docker.internal'".
 - `db:import` (and therefore `db:push`) now drops every table/view in the
   target database before importing, so the target actually matches the dump.
   A dump only replaces the tables it contains, so tables that existed only in
