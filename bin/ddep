@@ -862,7 +862,7 @@ resolve_ignore_table_args() {
     tables=$(
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
-        docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+        docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
         sh -c "mariadb \
             --host '${db_host}' \
             --port '${db_port}' \
@@ -1192,7 +1192,7 @@ elif [ "${command}" = "db:import" ]; then
     (
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
-        docker run --rm -i -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+        docker run --rm -i --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
             sh -c 'set -e; h="$1"; p="$2"; u="$3"; q="$4"; shift 4
                 drops=$(mariadb --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --skip-column-names --batch --raw --execute="$q" "$@")
                 printf "%s\n" "SET FOREIGN_KEY_CHECKS=0;" "$drops" | mariadb --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" "$@"
@@ -1248,11 +1248,11 @@ elif [ "${command}" = "db:export" ]; then
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
 
-        docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+        docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
             sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
             sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
 
-        docker run --rm -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
+        docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
             sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
             sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
     )
