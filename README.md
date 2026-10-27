@@ -228,7 +228,7 @@ doesn't affect the other.
   environment, without depending on a migration to recreate it.
 - `exclude_tables` — dropped entirely, structure and data both. `db:export`
   doesn't dump it at all, and nothing recreates it afterward: `db.migration`
-  (`database:updateschema` for typo3, `doctrine:migrations:migrate` for
+  (`extension:setup` for typo3, `doctrine:migrations:migrate` for
   symfony) only replays committed migration *files* — if the table/view was
   never created by one (a hand-written view like `v_media_references_info`
   usually wasn't; it's not something Doctrine's schema tooling generates on

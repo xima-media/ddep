@@ -233,7 +233,7 @@ load_default_config() {
   "settings": {
     "typo3": {
       "db": {
-        "migration": "/usr/bin/php vendor/bin/typo3 database:updateschema --no-interaction --quiet",
+        "migration": "/usr/bin/php vendor/bin/typo3 extension:setup --no-interaction",
         "exclude_rows": [
           "^cf_.*",
           "^cache_.*",
