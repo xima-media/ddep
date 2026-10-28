@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [1.2.1] - 2026-10-28
 
-- `host [host] [env]` opens an interactive shell on the remote docker host,
-  in the environment's docker compose project directory
-  (`<compose_projects_root>/<project>_<env>`), e.g. to inspect `.env` or run
-  `docker compose` there directly.
-- `ssh` and `exec` fall back to `sh` in containers without `bash`.
+### Fixed
+
+- `-V`/`--version` prints the released version; it always said `1.0.0`.
+
+## [1.2.0] - 2026-10-28
 
 ### Changed
 
@@ -31,11 +31,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deploy failed and was rolled back (e.g. on an empty database). Without a
   running container, the skipped migration is now a plain warning instead of
   an error message.
+## [1.1.1]
+
+### Added
+
+- `host [host] [env]` opens an interactive shell on the remote docker host,
+  in the environment's docker compose project directory
+  (`<compose_projects_root>/<project>_<env>`), e.g. to inspect `.env` or run
+  `docker compose` there directly.
+- `ssh` and `exec` fall back to `sh` in containers without `bash`.
+
+### Fixed
+
 - `db:export`/`db:import` (and therefore `db:pull`/`db:push`) now resolve
   `MARIADB_HOST=host.docker.internal`, which a project uses when MariaDB runs
   on the docker host itself. The temporary `mariadb` container now gets the
   same `host.docker.internal:host-gateway` mapping as the app container;
   before, it failed with "Unknown server host 'host.docker.internal'".
+## Earlier releases
+
+### Fixed
+
 - `db:import` (and therefore `db:push`) now drops every table/view in the
   target database before importing, so the target actually matches the dump.
   A dump only replaces the tables it contains, so tables that existed only in
