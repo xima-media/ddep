@@ -1034,7 +1034,8 @@ export DOCKER_HOST="ssh://${REMOTE_DOCKER_HOST}"
 
 if [[ -z "${target_env:-}" ]]; then
     target_env="$(select_env)"
-elif ! get_available_remote_envs | grep -qxF "${target_env}"; then
+elif ! get_available_remote_envs | grep -qxF "${target_env}" \
+    && ! ssh -n "${REMOTE_DOCKER_HOST}" "test -f $(printf '%q' "${COMPOSE_PROJECTS_ROOT}/${git_project_name}_${target_env}/.app.env.provision")"; then
     target_env="$(select_env "${target_env}")"
 fi
 
@@ -1202,17 +1203,19 @@ elif [ "${command}" = "db:import" ]; then
     )
 
     # The DB import already succeeded; a missing/ambiguous container here only
-    # means the migration is skipped, so this is a warning, not a fatal error -
-    # but get_container_id's own message (not suppressed here) explains WHICH:
-    # zero matched, or multiple (e.g. a stale container left over from a
-    # previous deploy) - a blanket "not found" wrongly implied the former even
-    # when it was actually the latter, confirmed against a real run.
-    if get_container_id container_id; then
+    # means the migration is skipped, so this is a warning, not a fatal error.
+    # No container at all (e.g. before the first successful deploy) is expected;
+    # several containers (e.g. a stale one left over from a previous deploy) are
+    # reported by get_container_id's own message.
+    if get_container_id container_id 2>/dev/null; then
         echo "Running database migration for ${APP_NAME}..."
 
         docker exec "${container_id}" \
             bash -lc "${DB_MIGRATION}"
+    elif [ $? -eq 1 ]; then
+        echo "${COLOR_YELLOW}Warning: no running '${APP_NAME}' container for environment '${target_env}' - skipping migration, the next deploy runs it.${COLOR_RESET}" >&2
     else
+        get_container_id container_id || true
         echo "${COLOR_YELLOW}Warning: skipping migration - see above${COLOR_RESET}" >&2
     fi
 
