@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An environment given explicitly on the command line is accepted when its
+  `.app.env.provision` exists on the host, even without an app container. So
+  `db:push`/`db:import` can seed the database of an environment whose first
+  deploy failed and was rolled back (e.g. on an empty database). Without a
+  running container, the skipped migration is now a plain warning instead of
+  an error message.
 - `db:export`/`db:import` (and therefore `db:pull`/`db:push`) now resolve
   `MARIADB_HOST=host.docker.internal`, which a project uses when MariaDB runs
   on the docker host itself. The temporary `mariadb` container now gets the
