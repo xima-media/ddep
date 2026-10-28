@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docker compose` there directly.
 - `ssh` and `exec` fall back to `sh` in containers without `bash`.
 
+### Changed
+
+- The default `db.migration` for `typo3` is core's `extension:setup` instead of
+  `database:updateschema`, so projects no longer need `helhum/typo3-console`.
+  Like before, it only creates and changes tables and fields. It no longer
+  passes `--quiet`, so the command's own error messages are shown. Projects
+  that set their own `db.migration` in `ddep.json` are unaffected.
+
 ### Fixed
 
 - An environment given explicitly on the command line is accepted when its
