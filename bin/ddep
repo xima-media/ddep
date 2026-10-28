@@ -6,7 +6,7 @@
 set -euo pipefail
 DEBUG=false
 # Bumped on release; keep in sync with the git tag used for composer.
-DDEP_VERSION="1.0.0"
+DDEP_VERSION="1.2.1"
 
 # Same codes as docker-compose-deploy's own deploy.sh. Only when stderr is a
 # terminal - never for output piped/redirected elsewhere (e.g. a CI log file).

@@ -393,6 +393,14 @@ ddep runs in CI as long as you account for the lack of a terminal:
 ddep --force db:import test staging < dump.sql.gz
 ```
 
+## Releasing
+
+1. Set `DDEP_VERSION` in `bin/ddep` to the new version.
+2. Rename `## [Unreleased]` in `CHANGELOG.md` to `## [<version>] - <date>` and add a new empty
+   `## [Unreleased]` above it. The bats suite checks that both versions match.
+3. Merge into `main` and tag the merge commit with the version (e.g. `1.2.1`). Packagist picks
+   up the tag automatically.
+
 ## Troubleshooting
 
 | Message | Cause / fix |

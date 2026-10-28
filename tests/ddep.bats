@@ -18,6 +18,14 @@ setup() {
     [[ "$output" == ddep\ * ]]
 }
 
+@test "--version matches the newest released version in CHANGELOG.md" {
+    local expected
+    expected=$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' "${BATS_TEST_DIRNAME}/../CHANGELOG.md" | tr -d '#[] ')
+    run "$DDEP" --version
+    [ "$status" -eq 0 ]
+    [ "$output" = "ddep ${expected}" ]
+}
+
 @test "--help prints usage and exits 0" {
     run "$DDEP" --help
     [ "$status" -eq 0 ]
