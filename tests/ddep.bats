@@ -502,3 +502,16 @@ YAML
     [ "${lines[4]}" = "11.4" ]                             # non-app/hosts/compose_projects_root overrides from ddep.json still apply
     [[ "$stderr" == *"ignored"* ]]                         # warns that ddep.json's app/hosts/compose_projects_root were ignored
 }
+
+@test "--no-migration is rejected for commands other than db:pull" {
+    run "$DDEP" --no-migration db:import dev feature_xyz
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"--no-migration only applies to db:pull"* ]]
+}
+
+@test "--no-migration is accepted for db:pull" {
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" --no-migration db:pull dev feature_xyz'
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"--no-migration"* ]]
+    [[ "$output" != *"Unknown argument"* ]]
+}

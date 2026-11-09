@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `db:pull` runs `db.migration` in ddev after the import, like `db:import` does
+  in the remote container. Views from `exclude_tables` that `db.migration`
+  recreates, pending migrations of the local branch and other migration steps
+  (e.g. a test user) now exist locally after a pull.
+- `--no-migration` skips that step, for a custom `db.migration` that only works
+  in the remote container.
+
 ## [1.2.1] - 2026-10-28
 
 ### Fixed

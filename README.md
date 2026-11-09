@@ -255,7 +255,7 @@ doesn't affect the other.
 | `media:pull [host] [env]` | Pull media files from the remote application container |
 | `db:import [host] [env]` | Drop all tables/views in the remote database, import a database dump (read from stdin, plain SQL or gzip) into it, then run the application's DB migration |
 | `db:export [host] [env]` | Export the remote database to stdout, gzip-compressed |
-| `db:pull [host] [env]` | Local-dev convenience wrapper: `db:export` piped into `ddev import-db` for the ddev project in the current working directory. Requires `ddev` on `PATH` |
+| `db:pull [host] [env]` | Local-dev convenience wrapper: `db:export` piped into `ddev import-db` for the ddev project in the current working directory, then the application's `db.migration` via `ddev exec` (skip with `--no-migration`). Requires `ddev` on `PATH` |
 | `db:push [host] [env]` | Local-dev convenience wrapper, the reverse of `db:pull`: dumps the local ddev project's database (same `exclude_rows`/`exclude_tables` filtering as `db:export`) and pipes it into `db:import`. Requires `ddev` on `PATH` |
 | `ssh [host] [env]` | Open an interactive shell inside the remote container |
 | `host [host] [env]` | Open an interactive shell on the remote docker host, in the environment's docker compose project directory (`<compose_projects_root>/<project>_<env>`) |
@@ -295,6 +295,7 @@ positional, after the command, not flags (see [Commands](#commands) above).
 |--------|--------------|
 | `--debug` | Enable bash execution tracing |
 | `--force` | Skip the confirmation prompt for destructive operations (`db:import`, `media:push`). Required for non-interactive/CI use |
+| `--no-migration` | `db:pull` only: skip the local `db.migration` after the import, e.g. if your own `db.migration` only works in the remote container |
 | `-h`, `--help` | Show usage and exit |
 | `-V`, `--version` | Show version and exit |
 
@@ -332,8 +333,11 @@ ddep db:export dev feature_xyz > dump.sql.gz
 # Pipe an existing dump directly into the remote database
 cat dump.sql.gz | ddep db:import dev feature_xyz
 
-# Pull the dev database straight into the local ddev project (requires ddev)
+# Pull the dev database straight into the local ddev project and migrate it (requires ddev)
 ddep db:pull dev feature_xyz
+
+# Same, without running db.migration locally
+ddep --no-migration db:pull dev feature_xyz
 
 # Push the local ddev project's database to the dev environment (requires ddev)
 ddep db:push dev feature_xyz
@@ -365,7 +369,8 @@ Weigh this before rolling it out:
 - **`db:import` drops every table/view in the remote database first.** Tables
   that exist only in the target are gone afterwards, and a partial dump (e.g. a
   single table) leaves only what it contains. Tables/views in `exclude_tables`
-  must be recreated by the application's `db.migration`.
+  must be recreated by the application's `db.migration`, which `db:import`
+  runs in the remote container and `db:pull` in ddev.
 - **`db:import`/`media:push` overwrite remote data.** They prompt for confirmation
   (type the host slug on non-`dev` hosts); `--force` bypasses that, so treat
   `--force` against a non-`dev` host as a privileged operation.
