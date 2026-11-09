@@ -44,7 +44,7 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #     "symfony": {
 #       "db": {
 #         "exclude_rows": ["^sessions$"],
-#         "exclude_tables": ["^v_media_references_info$"]
+#         "exclude_tables": ["^v_example_report$"]
 #       }
 #     }
 #   }
@@ -88,8 +88,9 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #                             db.exclude_tables tables/views are dropped entirely.
 #   db:pull [host] [env]     Local-dev convenience wrapper: db:export from the
 #                             remote, piped straight into `ddev import-db` for the
-#                             ddev project in the current working directory.
-#                             Requires ddev on PATH.
+#                             ddev project in the current working directory, then
+#                             the application's DB migration via `ddev exec`
+#                             (skip with --no-migration). Requires ddev on PATH.
 #   db:push [host] [env]     Local-dev convenience wrapper, the reverse of
 #                             db:pull: dumps the local ddev project's database
 #                             (same db.exclude_rows/db.exclude_tables filtering
@@ -122,6 +123,9 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #   --force                 Skip the confirmation prompt for destructive
 #                           operations (db:import, media:push). Required for
 #                           non-interactive/CI use.
+#   --no-migration          db:pull only: skip the local DB migration after the
+#                           import (for a db.migration that only works in the
+#                           remote container).
 #
 # Configuration:
 #   Built-in defaults, deep-merged with .docker/ddep.json (optional, per-application
@@ -186,7 +190,8 @@ Commands:
   db:import [host] [env]   Drop all remote tables/views, import a database dump
                             (stdin, plain SQL or gzip), then migrate
   db:export [host] [env]   Export the remote database to stdout, gzip-compressed
-  db:pull [host] [env]     db:export piped into `ddev import-db` (requires ddev)
+  db:pull [host] [env]     db:export piped into `ddev import-db`, then migrate
+                            locally via `ddev exec` (requires ddev)
   db:push [host] [env]     Local ddev database dump piped into db:import (requires ddev)
   ssh [host] [env]         Open an interactive shell in the remote container
   host [host] [env]        Open an interactive shell on the remote docker host,
@@ -202,6 +207,7 @@ Commands:
 
 Options:
   --force         Skip confirmation for destructive ops (db:import, media:push)
+  --no-migration  db:pull only: skip the local migration after the import
   --debug         Enable bash execution tracing
   -h, --help      Show this help and exit
   -V, --version   Show version and exit
@@ -894,6 +900,7 @@ target_env=""
 exec_command=""
 tmpfile=""
 FORCE=false
+NO_MIGRATION=false
 
 # Populated via namerefs by get_container_id and get_mariadb_credentials.
 container_id=""
@@ -936,6 +943,10 @@ while [[ $# -gt 0 && -z "${command}" ]]; do
             FORCE=true
             shift
             ;;
+        --no-migration)
+            NO_MIGRATION=true
+            shift
+            ;;
         media:push|media:pull|db:import|db:export|db:push|db:pull|logs|config|info|ssh|host|exec)
             command="$1"
             shift
@@ -948,6 +959,11 @@ while [[ $# -gt 0 && -z "${command}" ]]; do
 done
 if [ -z "${command}" ]; then
     usage >&2
+    exit 1
+fi
+
+if [[ "${NO_MIGRATION}" == "true" && "${command}" != "db:pull" ]]; then
+    echo "${COLOR_RED}Error: --no-migration only applies to db:pull.${COLOR_RESET}" >&2
     exit 1
 fi
 
@@ -1274,6 +1290,17 @@ elif [ "${command}" = "db:pull" ]; then
     # ddev's own internal docker calls would otherwise inherit and query
     # instead of the local daemon its db container runs on.
     DDEP_CHILD_INVOCATION=true "$0" db:export "${host}" "${target_env}" | gzip -dc | DOCKER_HOST='' ddev import-db
+
+    # Same db.migration as db:import runs remotely, so exclude_tables views,
+    # pending migrations of the local branch etc. exist locally too. One
+    # argument: ddev exec joins its arguments with spaces and runs the result
+    # via bash -c in the web container's project root.
+    if [[ "${NO_MIGRATION}" == "true" ]]; then
+        echo "Skipping database migration (--no-migration)." >&2
+    else
+        echo "Running database migration for ${APP_NAME} in ddev..." >&2
+        DOCKER_HOST='' ddev exec "${DB_MIGRATION}"
+    fi
 
 elif [ "${command}" = "db:push" ]; then
     # Local-dev convenience wrapper, the reverse of db:pull: dumps the local

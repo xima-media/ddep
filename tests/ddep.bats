@@ -55,20 +55,20 @@ setup() {
     # arg parsing succeeds and it fails later, for an unrelated reason (no git
     # repo). Distinguishes a regression back to "flags must come before the
     # command"/"unexpected argument(s)" ever firing here, which it must not.
-    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" ssh dev dwis-3442'
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" ssh dev feature_xyz'
     [ "$status" -eq 1 ]
     [[ "$output" != *"unexpected argument"* ]]
     [[ "$output" == *"could not determine the project name"* ]]
 }
 
 @test "ssh rejects more than two positional arguments" {
-    run "$DDEP" ssh dev dwis-3442 extra
+    run "$DDEP" ssh dev feature_xyz extra
     [ "$status" -eq 1 ]
     [[ "$output" == *"expected at most <host> <environment>"* ]]
 }
 
 @test "host rejects more than two positional arguments" {
-    run "$DDEP" host dev dwis-3442 extra
+    run "$DDEP" host dev feature_xyz extra
     [ "$status" -eq 1 ]
     [[ "$output" == *"expected at most <host> <environment>"* ]]
 }
@@ -78,29 +78,29 @@ setup() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"exec requires exactly <host> <environment> <command>"* ]]
 
-    run "$DDEP" exec dev dwis-3442
+    run "$DDEP" exec dev feature_xyz
     [ "$status" -eq 1 ]
     [[ "$output" == *"exec requires exactly <host> <environment> <command>"* ]]
 
-    run "$DDEP" exec dev dwis-3442 "echo hi" extra
+    run "$DDEP" exec dev feature_xyz "echo hi" extra
     [ "$status" -eq 1 ]
     [[ "$output" == *"exec requires exactly <host> <environment> <command>"* ]]
 }
 
 @test "exec with host, environment, and command parses as such, not as unexpected arguments" {
-    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" exec dev dwis-3442 "echo hi"'
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" exec dev feature_xyz "echo hi"'
     [ "$status" -eq 1 ]
     [[ "$output" != *"unexpected argument"* ]]
     [[ "$output" == *"could not determine the project name"* ]]
 }
 
 @test "db:pull/db:push are recognized commands, not misread as unexpected arguments" {
-    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" db:pull dev dwis-3442'
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" db:pull dev feature_xyz'
     [ "$status" -eq 1 ]
     [[ "$output" != *"unexpected argument"* ]]
     [[ "$output" == *"could not determine the project name"* ]]
 
-    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" db:push dev dwis-3442'
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" db:push dev feature_xyz'
     [ "$status" -eq 1 ]
     [[ "$output" != *"unexpected argument"* ]]
     [[ "$output" == *"could not determine the project name"* ]]
@@ -501,4 +501,17 @@ YAML
     [ "${lines[3]}" = "/opt/docker/compose" ]              # hosts.yaml's own value - NOT local_with_legacy_hosts.json's "/legacy/path"
     [ "${lines[4]}" = "11.4" ]                             # non-app/hosts/compose_projects_root overrides from ddep.json still apply
     [[ "$stderr" == *"ignored"* ]]                         # warns that ddep.json's app/hosts/compose_projects_root were ignored
+}
+
+@test "--no-migration is rejected for commands other than db:pull" {
+    run "$DDEP" --no-migration db:import dev feature_xyz
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"--no-migration only applies to db:pull"* ]]
+}
+
+@test "--no-migration is accepted for db:pull" {
+    run bash -c 'cd "$BATS_TEST_TMPDIR" && "$DDEP" --no-migration db:pull dev feature_xyz'
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"--no-migration"* ]]
+    [[ "$output" != *"Unknown argument"* ]]
 }

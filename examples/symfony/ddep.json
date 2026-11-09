@@ -4,7 +4,7 @@
 			"db": {
 				"exclude_tables": [
 					"^sessions$",
-					"^v_media_references_info$"
+					"^v_example_report$"
 				]
 			}
 		}
