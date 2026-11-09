@@ -67,9 +67,8 @@ directly — the script is self-contained and location-independent.
 ## Setup
 
 In the root of your project, create `.docker/hosts.yaml` — a plain
-Ansible inventory (the same file the ["docker-compose-deploy" GitLab CI
-template](https://git.xintern.de/typo3/intern/devops/docker-compose-deploy)
-requires, if your project uses it):
+Ansible inventory (the same file the "docker-compose-deploy" GitLab CI
+template requires, if your project uses it):
 
 ```yaml
 all:
@@ -151,7 +150,7 @@ setting overrides, `mariadb_version` — can optionally be set in
     "symfony": {
       "db": {
         "exclude_rows": ["^sessions$"],
-        "exclude_tables": ["^v_media_references_info$"]
+        "exclude_tables": ["^v_example_report$"]
       }
     }
   }
@@ -207,7 +206,7 @@ For example, to replace the built-in `db:export` table-exclude lists for `symfon
           "^sessions$"
         ],
         "exclude_tables": [
-          "^v_media_references_info$"
+          "^v_example_report$"
         ]
       }
     }
@@ -230,7 +229,7 @@ doesn't affect the other.
   doesn't dump it at all, and nothing recreates it afterward: `db.migration`
   (`extension:setup` for typo3, `doctrine:migrations:migrate` for
   symfony) only replays committed migration *files* — if the table/view was
-  never created by one (a hand-written view like `v_media_references_info`
+  never created by one (a hand-written view like `v_example_report`
   usually wasn't; it's not something Doctrine's schema tooling generates on
   its own), the target environment simply ends up without it, permanently,
   until something else creates it. Use `exclude_tables` only for something
@@ -244,7 +243,7 @@ doesn't affect the other.
   `.sql` file via `dbal:run-sql` after the regular migrations:
 
   ```json
-  "migration": "/usr/bin/php bin/console doctrine:migrations:migrate --no-interaction --quiet && /usr/bin/php bin/console dbal:run-sql -- \"$(cat migrations/v_media_references_info.sql)\""
+  "migration": "/usr/bin/php bin/console doctrine:migrations:migrate --no-interaction --quiet && /usr/bin/php bin/console dbal:run-sql -- \"$(cat migrations/v_example_report.sql)\""
   ```
 
 ## Commands
