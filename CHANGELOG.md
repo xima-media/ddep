@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-09
+
+### Fixed
+
+- `-V`/`--version` prints the released version; 1.3.0 still said `1.2.1`.
+
+## [1.3.0] - 2026-11-09
+
 ### Added
 
 - `db:pull` runs `db.migration` in ddev after the import, like `db:import` does
