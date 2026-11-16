@@ -1261,6 +1261,11 @@ elif [ "${command}" = "db:export" ]; then
     # container before it crosses the SSH-tunnelled Docker connection, then
     # concatenated into one multi-member gzip stream on stdout (gunzip handles
     # concatenated gzip members transparently, decompressing back-to-back).
+    # The container's sh has no pipefail, so a pipe's status is gzip's alone: a
+    # mariadb-dump aborting halfway (e.g. "Lost connection to server during
+    # query") would otherwise end the stream early with exit 0. Its status is
+    # therefore passed out of the pipe via a marker file, failing the docker run
+    # and - under set -e - db:export as a whole.
     # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
     # never echoes it, and forwarded via -e (not -p) so it never appears in argv.
     (
@@ -1268,11 +1273,11 @@ elif [ "${command}" = "db:export" ]; then
         export MYSQL_PWD="${db_password}"
 
         docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
+            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; { mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-data "$@" || echo "$?" > /tmp/dump-failed; } | gzip; [ ! -e /tmp/dump-failed ]' \
             sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
 
         docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
+            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; { mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" || echo "$?" > /tmp/dump-failed; } | gzip; [ ! -e /tmp/dump-failed ]' \
             sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
     )
 

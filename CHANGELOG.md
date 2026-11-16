@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `db:export` fails when `mariadb-dump` fails. A dump aborting halfway (e.g.
+  `Error 2013: Lost connection to server during query`) used to end the stream
+  early with exit 0, so `db:pull` imported a truncated database and reported
+  success.
+
 ## [1.3.1] - 2026-11-09
 
 ### Fixed
