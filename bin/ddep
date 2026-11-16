@@ -1294,7 +1294,16 @@ elif [ "${command}" = "db:pull" ]; then
     # has DOCKER_HOST=ssh://<remote host> exported for the remote side, which
     # ddev's own internal docker calls would otherwise inherit and query
     # instead of the local daemon its db container runs on.
-    DDEP_CHILD_INVOCATION=true "$0" db:export "${host}" "${target_env}" | gzip -dc | DOCKER_HOST='' ddev import-db
+    #
+    # The export goes to a temp file first and is only imported once it is
+    # complete (cleanup runs via the global EXIT trap). Streamed straight into
+    # ddev import-db, the slower import throttles the remote mariadb-dump until
+    # the server drops the connection (net_write_timeout, "Error 2013: Lost
+    # connection to server during query"), and a failed export would already
+    # have been imported partially, leaving a truncated local database.
+    tmpfile=$(mktemp)
+    DDEP_CHILD_INVOCATION=true "$0" db:export "${host}" "${target_env}" > "${tmpfile}"
+    gzip -dc "${tmpfile}" | DOCKER_HOST='' ddev import-db
 
     # Same db.migration as db:import runs remotely, so exclude_tables views,
     # pending migrations of the local branch etc. exist locally too. One
