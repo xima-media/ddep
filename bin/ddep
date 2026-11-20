@@ -24,7 +24,7 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 HOSTS_FILE="$(pwd)/.docker/hosts.yaml"
 # Pinned by tag+digest, matching this org's convention elsewhere
 # (docker-compose-deploy). See run_yq for why this isn't just "require yq on PATH".
-YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025"
+YQ_IMAGE="mikefarah/yq:4.54.3@sha256:7834187596ad56fd5a81436114e0b0b9dd54c91bb43946d1f7145b2be5f9c3d2"
 # "app", "hosts", and "compose_projects_root" always come from .docker/hosts.yaml
 # (required), never from .docker/ddep.json, even as a fallback - see
 # load_hosts_config/load_config.

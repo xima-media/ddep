@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `db:import` runs one import per environment at a time. An interrupted import
   keeps running on the remote host and finishes on its own.
 
+### Changed
+
+- yq image updated to 4.54.3 (pinned by its multi-arch digest).
+
 ### Fixed
 
 - `db:export` fails when `mariadb-dump` fails. A dump aborting halfway (e.g.
