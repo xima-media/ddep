@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `db:import` runs one import per environment at a time. An interrupted import
+  keeps running on the remote host and finishes on its own.
+
 ### Fixed
 
 - `db:export` fails when `mariadb-dump` fails. A dump aborting halfway (e.g.
@@ -28,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code, gzip integrity and the `-- Dump completed` footer, only then sends
   the file, and checks it again after the transfer. A slow network or reader
   no longer stalls `mariadb-dump` into the server's `net_write_timeout`.
+- `db:import` verifies the dump before changing anything, so a truncated or
+  damaged dump is refused, and copies it completely to the remote host
+  (`docker cp`) before the import starts, so a connection dropping during the
+  transfer no longer leaves a half-imported database. Every dump must end with
+  the `-- Dump completed` footer.
 
 ## [1.3.1] - 2026-11-09
 
