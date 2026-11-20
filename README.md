@@ -310,8 +310,10 @@ is only changed by a dump that arrived complete:
   `CURRENT_USER` on import, so objects dumped under another database user import
   instead of failing. Row data is never rewritten.
 - **Disk space:** the local machine (temp directory) and the remote host each
-  need room for one compressed dump during an export or import. Running out
-  fails the command before anything is changed.
+  need room for one compressed dump during an export or import; for plain,
+  uncompressed SQL on `db:import`'s stdin, the local machine needs room for the
+  uncompressed dump plus its compressed copy. Running out fails the command
+  before anything is changed.
 - **Dumps from ddep before 1.4** that contain triggers are refused: they define
   every trigger twice, so the import would fail halfway. Export them again.
 
