@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - yq image updated to 4.54.3 (pinned by its multi-arch digest).
 
+### Removed
+
+- The warning for `app`/`hosts`/`compose_projects_root` in `.docker/ddep.json`
+  (the format before `.docker/hosts.yaml`). They are still ignored there.
+
 ### Fixed
 
 - `db:export` fails when `mariadb-dump` fails. A dump aborting halfway (e.g.

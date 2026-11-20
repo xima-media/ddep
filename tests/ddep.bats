@@ -486,7 +486,7 @@ YAML
     [[ "$stderr" == *"compose_projects_root"* ]]
 }
 
-@test "load_config: ddep.json is not allowed to override app/hosts/compose_projects_root - hosts.yaml wins, with a warning" {
+@test "load_config: ddep.json is not allowed to override app/hosts/compose_projects_root - hosts.yaml wins" {
     run --separate-stderr bash -c '
         source "$DDEP"
         HOSTS_FILE="$FIXTURES/hosts.yaml"
@@ -500,7 +500,7 @@ YAML
     [ "${lines[2]}" = "customer-a-user@customer-a-host" ]  # hosts.yaml's own multi-host entry, untouched
     [ "${lines[3]}" = "/opt/docker/compose" ]              # hosts.yaml's own value - NOT local_with_legacy_hosts.json's "/legacy/path"
     [ "${lines[4]}" = "11.4" ]                             # non-app/hosts/compose_projects_root overrides from ddep.json still apply
-    [[ "$stderr" == *"ignored"* ]]                         # warns that ddep.json's app/hosts/compose_projects_root were ignored
+    [ -z "$stderr" ]
 }
 
 @test "--no-migration is rejected for commands other than db:pull" {

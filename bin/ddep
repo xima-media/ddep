@@ -54,8 +54,7 @@ YQ_IMAGE="mikefarah/yq:4.54.3@sha256:7834187596ad56fd5a81436114e0b0b9dd54c91bb43
 # db.exclude_tables: dropped entirely, structure and data both - for tables/views
 #   that shouldn't exist in the dump at all and that the target recreates
 #   itself, if needed (see README "Overrides").
-# A ddep.json still setting "app"/"hosts" (the pre-hosts.yaml schema) has both
-# ignored, with a warning - see load_config.
+# "app"/"hosts"/"compose_projects_root" in ddep.json are ignored - see load_config.
 
 # Requirements (local machine):
 #   jq, docker, ssh, rsync, gzip
@@ -134,8 +133,8 @@ YQ_IMAGE="mikefarah/yq:4.54.3@sha256:7834187596ad56fd5a81436114e0b0b9dd54c91bb43
 # Configuration:
 #   Built-in defaults, deep-merged with .docker/ddep.json (optional, per-application
 #   setting overrides), overlaid with .docker/hosts.yaml's "app"/"hosts"/
-#   "compose_projects_root" - all three required, and exclusively hosts.yaml's (ddep.json
-#   setting them is ignored, with a warning) - see the schema above.
+#   "compose_projects_root" - all three required, and exclusively hosts.yaml's (ignored
+#   in ddep.json) - see the schema above.
 #
 # Examples:
 #
@@ -436,15 +435,9 @@ load_config() {
     if [[ -f "${local_config}" ]]; then
         local_json="$(cat "${local_config}")"
 
-        # Pre-hosts.yaml ddep.json schema - ignored now, never a fallback.
         # app/hosts/compose_projects_root are exclusively load_hosts_config's
         # concern (see below) - ddep.json never contributes to them at all.
-        if jq -e '(.app != null) or (.hosts != null) or (.compose_projects_root != null)' <<< "${local_json}" >/dev/null; then
-            echo "${COLOR_YELLOW}Warning: ${local_config} sets \"app\"/\"hosts\"/\"compose_projects_root\" - all" >&2
-            echo "         ignored. These are required in ${HOSTS_FILE} instead - remove them" >&2
-            echo "         from ${local_config}.${COLOR_RESET}" >&2
-            local_json="$(jq 'del(.app, .hosts, .compose_projects_root)' <<< "${local_json}")"
-        fi
+        local_json="$(jq 'del(.app, .hosts, .compose_projects_root)' <<< "${local_json}")"
     fi
 
     # load_hosts_config's app/hosts/compose_projects_root and this
