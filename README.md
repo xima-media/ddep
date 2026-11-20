@@ -40,7 +40,7 @@ require it as a dev dependency:
 ```
 
 ```sh
-composer require --dev xima/ddep:^1.0
+composer require --dev xima/ddep:^2.0
 ```
 
 This exposes the binary as `vendor/bin/ddep`. Releases are cut as git tags, so
@@ -197,8 +197,6 @@ For example, to replace the built-in `db:export` table-exclude lists for `symfon
 
 ```json
 {
-  "app": "symfony",
-  "hosts": { "dev": "user@dev-host" },
   "settings": {
     "symfony": {
       "db": {
@@ -315,7 +313,9 @@ is only changed by a dump that arrived complete:
   uncompressed SQL on `db:import`'s stdin, the local machine needs room for the
   uncompressed dump plus its compressed copy, and `db:pull` needs room for two
   compressed dumps locally (the export's checked copy and its own). Running out
-  fails the command before anything is changed.
+  while the dump is staged fails the command before anything is changed; if the
+  database server runs out of space during the import itself, the target is
+  incomplete and the import has to be run again.
 - **Dumps from ddep before 2.0** are refused: they have structure and data in
   two parts and define every trigger twice, so the import could fail halfway.
   Export them again.
