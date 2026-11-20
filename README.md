@@ -298,7 +298,8 @@ is only changed by a dump that arrived complete:
   statement aborts the import with a non-zero exit code; the target is then
   incomplete and needs a new import. An import interrupted after the copy keeps
   running on the remote host instead of stopping halfway. One import per
-  environment runs at a time.
+  environment runs at a time; the lock covers the drop and the import, not the
+  migration that runs afterwards.
 - **Checked means:** the gzip data is intact (its checksum and length catch a
   cut or damaged transfer), and the SQL ends with the `-- Dump completed` footer
   `mariadb-dump`/`mysqldump` only write after a successful run (catches a dump
@@ -312,8 +313,9 @@ is only changed by a dump that arrived complete:
 - **Disk space:** the local machine (temp directory) and the remote host each
   need room for one compressed dump during an export or import; for plain,
   uncompressed SQL on `db:import`'s stdin, the local machine needs room for the
-  uncompressed dump plus its compressed copy. Running out fails the command
-  before anything is changed.
+  uncompressed dump plus its compressed copy, and `db:pull` needs room for two
+  compressed dumps locally (the export's checked copy and its own). Running out
+  fails the command before anything is changed.
 - **Dumps from ddep before 1.4** that contain triggers are refused: they define
   every trigger twice, so the import would fail halfway. Export them again.
 
