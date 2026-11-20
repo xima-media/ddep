@@ -456,5 +456,5 @@ ddep --force db:import test staging < dump.sql.gz
 | `dump verification failed: …` | The dump is truncated, damaged or has no `-- Dump completed` footer. Nothing was changed; export it again. |
 | `the database export failed (see above)` / `the dump arrived incomplete` | `mariadb-dump` failed on the remote host (its error is shown above), or the connection dropped during the transfer. Nothing was written to stdout; run the export again. |
 | `the import failed or the connection was lost (see above) - the database may be incomplete` | A statement in the dump failed (shown above), e.g. a row larger than the server's `max_allowed_packet`, or the connection dropped mid-import. Fix the cause and import again. |
-| `another import into '…' is still running` | Wait for it; an interrupted import keeps running on the remote host and finishes on its own. |
+| `another import into '…' is in progress` | Wait for it; an interrupted import keeps running on the remote host and finishes on its own. If no import is running (e.g. a copy was interrupted), remove the container as shown in the message. |
 | `this dump was made by ddep before 1.4 and contains triggers` | Export the database again with ddep 1.4 or newer. Nothing was changed. |

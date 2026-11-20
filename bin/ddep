@@ -1311,11 +1311,14 @@ elif [ "${command}" = "db:import" ]; then
     # below fails with "Table ... already exists".
     drop_query="SELECT CONCAT('DROP ', IF(TABLE_TYPE = 'VIEW', 'VIEW', 'TABLE'), ' IF EXISTS \`', REPLACE(TABLE_NAME, '\`', '\`\`'), '\`;') FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()"
     import_name="ddep-import-${git_project_name}_${target_env}"
-    # A leftover from an interrupted run is removed; docker rm without -f
-    # refuses one that is still running.
-    if [[ -n "$(docker ps -aq --filter "name=^${import_name}\$")" ]] && ! docker rm "${import_name}" >/dev/null 2>&1; then
-        echo "${COLOR_RED}Error: another import into '${target_env}' is still running (container ${import_name} on '${host}').${COLOR_RESET}" >&2
-        exit 1
+    # A finished leftover from an interrupted run is removed. One that is
+    # running, or created but not started yet (another import still copying
+    # its dump), counts as an import in progress.
+    if [[ -n "$(docker ps -aq --filter "name=^${import_name}\$")" ]]; then
+        if [[ -z "$(docker ps -aq --filter "name=^${import_name}\$" --filter status=exited)" ]] || ! docker rm "${import_name}" >/dev/null 2>&1; then
+            echo "${COLOR_RED}Error: another import into '${target_env}' is in progress (container ${import_name} on '${host}'). If none is, remove it: docker -H ssh://${REMOTE_DOCKER_HOST} rm ${import_name}${COLOR_RESET}" >&2
+            exit 1
+        fi
     fi
 
     import_container=$(create_import_container "${import_name}" \
