@@ -618,16 +618,16 @@ SQL
     [[ "$output" == *'INSERT INTO audit (tid) VALUES (NEW.id);'* ]]
 }
 
-@test "refuse_legacy_trigger_dump refuses only two-part dumps with triggers" {
+@test "refuse_legacy_dump refuses two-part dumps from ddep before 2.0" {
     local trigger='/*!50003 CREATE*/ /*!50017 DEFINER=`app`@`%`*/ /*!50003 TRIGGER t_ai AFTER INSERT ON t FOR EACH ROW SET @x = 1 */;;'
     { printf 'CREATE TABLE t (id INT);\n%s\n-- Dump completed on 2026-01-01\n' "$trigger"; printf 'INSERT INTO t VALUES (1);\n%s\n-- Dump completed on 2026-01-01\n' "$trigger"; } | gzip > "$BATS_TEST_TMPDIR/legacy-triggers.gz"
     { printf 'CREATE TABLE t (id INT);\n-- Dump completed on 2026-01-01\n'; printf 'INSERT INTO t VALUES (1);\n-- Dump completed on 2026-01-01\n'; } | gzip > "$BATS_TEST_TMPDIR/legacy-plain.gz"
     printf 'CREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\n%s\n-- Dump completed on 2026-01-01\n' "$trigger" | gzip > "$BATS_TEST_TMPDIR/current.gz"
-    run bash -c 'source "$DDEP"; refuse_legacy_trigger_dump "$1"' _ "$BATS_TEST_TMPDIR/legacy-triggers.gz"
+    run bash -c 'source "$DDEP"; refuse_legacy_dump "$1"' _ "$BATS_TEST_TMPDIR/legacy-triggers.gz"
     [ "$status" -ne 0 ]
-    [[ "$output" == *"made by ddep before 1.4"* ]]
-    run bash -c 'source "$DDEP"; refuse_legacy_trigger_dump "$1"' _ "$BATS_TEST_TMPDIR/legacy-plain.gz"
-    [ "$status" -eq 0 ]
-    run bash -c 'source "$DDEP"; refuse_legacy_trigger_dump "$1"' _ "$BATS_TEST_TMPDIR/current.gz"
+    [[ "$output" == *"made by ddep before 2.0"* ]]
+    run bash -c 'source "$DDEP"; refuse_legacy_dump "$1"' _ "$BATS_TEST_TMPDIR/legacy-plain.gz"
+    [ "$status" -ne 0 ]
+    run bash -c 'source "$DDEP"; refuse_legacy_dump "$1"' _ "$BATS_TEST_TMPDIR/current.gz"
     [ "$status" -eq 0 ]
 }

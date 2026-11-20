@@ -316,8 +316,9 @@ is only changed by a dump that arrived complete:
   uncompressed dump plus its compressed copy, and `db:pull` needs room for two
   compressed dumps locally (the export's checked copy and its own). Running out
   fails the command before anything is changed.
-- **Dumps from ddep before 1.4** that contain triggers are refused: they define
-  every trigger twice, so the import would fail halfway. Export them again.
+- **Dumps from ddep before 2.0** are refused: they have structure and data in
+  two parts and define every trigger twice, so the import could fail halfway.
+  Export them again.
 
 For moving a database to another server, use `db:export --full`: no
 `exclude_rows`/`exclude_tables`, plus stored routines and events.
@@ -461,4 +462,4 @@ ddep --force db:import test staging < dump.sql.gz
 | `the database export failed (see above)` / `the dump arrived incomplete` | `mariadb-dump` failed on the remote host (its error is shown above), or the connection dropped during the transfer. Nothing was written to stdout; run the export again. |
 | `the import failed or the connection was lost (see above) - the database may be incomplete` | A statement in the dump failed (shown above), e.g. a row larger than the server's `max_allowed_packet`, or the connection dropped mid-import. Fix the cause and import again. |
 | `another import into '…' is in progress` | Wait for it; an interrupted import keeps running on the remote host and finishes on its own. If no import is running (e.g. a copy was interrupted), remove the container as shown in the message. |
-| `this dump was made by ddep before 1.4 and contains triggers` | Export the database again with ddep 1.4 or newer. Nothing was changed. |
+| `this dump was made by ddep before 2.0` | Export the database again with ddep 2.0 or newer. Nothing was changed. |

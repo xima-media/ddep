@@ -958,13 +958,13 @@ verify_dump_file() {
 verify_dump "$1"' sh "$1"
 }
 
-# ddep before 1.4 dumped structure and data separately, so its dumps (more
-# than one "-- Dump completed" footer) define every trigger twice. The second
-# CREATE TRIGGER fails, and the first one fires for every imported row, so
-# such a dump with triggers is refused before anything is dropped.
-refuse_legacy_trigger_dump() {
-    if gzip -dc "$1" | awk '/^-- Dump completed/ { footers++ } /^\/\*!50003 CREATE\*\/ \/\*!50017 DEFINER=/ { triggers = 1 } END { exit !(footers > 1 && triggers) }'; then
-        echo "${COLOR_RED}Error: this dump was made by ddep before 1.4 and contains triggers, which it defines twice - the import would fail halfway. Export it again with ddep 1.4 or newer; nothing was changed.${COLOR_RESET}" >&2
+# ddep before 2.0 dumped structure and data separately, so its dumps have more
+# than one "-- Dump completed" footer and define every trigger twice: the
+# second CREATE TRIGGER fails, and the first one fires for every imported row.
+# Such a dump is refused before anything is dropped.
+refuse_legacy_dump() {
+    if gzip -dc "$1" | awk '/^-- Dump completed/ { footers++ } END { exit !(footers > 1) }'; then
+        echo "${COLOR_RED}Error: this dump was made by ddep before 2.0 (structure and data in two parts). Export it again with ddep 2.0 or newer; nothing was changed.${COLOR_RESET}" >&2
         return 1
     fi
 }
@@ -1285,7 +1285,7 @@ elif [ "${command}" = "db:import" ]; then
         echo "${COLOR_RED}Error: the dump is incomplete or damaged; nothing was changed.${COLOR_RESET}" >&2
         exit 1
     fi
-    refuse_legacy_trigger_dump "${dump_file}"
+    refuse_legacy_dump "${dump_file}"
 
     confirm_destructive "drop all tables/views in the remote database, import the dump and run migrations"
 
