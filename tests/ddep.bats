@@ -565,3 +565,9 @@ SQL
     [[ "$output" == *"(3,'DEFINER=\`x\`@\`y\`'),"* ]]
     [[ "$output" == *"(4,'/*!50013 DEFINER=\`x\`@\`y\`');"* ]]
 }
+
+@test "--full is rejected for commands other than db:export" {
+    run "$DDEP" --full db:import dev feature_xyz
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"--full only applies to db:export"* ]]
+}

@@ -124,6 +124,9 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #   --force                 Skip the confirmation prompt for destructive
 #                           operations (db:import, media:push). Required for
 #                           non-interactive/CI use.
+#   --full                  db:export only: no db.exclude_rows/db.exclude_tables,
+#                           plus stored routines and events (moving a database
+#                           to another server).
 #   --no-migration          db:pull only: skip the local DB migration after the
 #                           import (for a db.migration that only works in the
 #                           remote container).
@@ -208,6 +211,7 @@ Commands:
 
 Options:
   --force         Skip confirmation for destructive ops (db:import, media:push)
+  --full          db:export only: no exclusions, plus routines and events
   --no-migration  db:pull only: skip the local migration after the import
   --debug         Enable bash execution tracing
   -h, --help      Show this help and exit
@@ -989,6 +993,7 @@ exec_command=""
 tmpdir=""
 import_container=""
 FORCE=false
+FULL=false
 NO_MIGRATION=false
 
 # Populated via namerefs by get_container_id and get_mariadb_credentials.
@@ -1038,6 +1043,10 @@ while [[ $# -gt 0 && -z "${command}" ]]; do
             FORCE=true
             shift
             ;;
+        --full)
+            FULL=true
+            shift
+            ;;
         --no-migration)
             NO_MIGRATION=true
             shift
@@ -1059,6 +1068,11 @@ fi
 
 if [[ "${NO_MIGRATION}" == "true" && "${command}" != "db:pull" ]]; then
     echo "${COLOR_RED}Error: --no-migration only applies to db:pull.${COLOR_RESET}" >&2
+    exit 1
+fi
+
+if [[ "${FULL}" == "true" && "${command}" != "db:export" ]]; then
+    echo "${COLOR_RED}Error: --full only applies to db:export.${COLOR_RESET}" >&2
     exit 1
 fi
 
@@ -1325,13 +1339,19 @@ elif [ "${command}" = "db:export" ]; then
     ssl_args=()
     mariadb_ssl_args ssl_args "${db_ssl}"
 
-    # exclude_rows tables keep their structure and triggers but skip their
-    # rows, exclude_tables tables/views are left out entirely.
+    # --full: everything, for moving a database to another server - no
+    # exclusions, plus stored routines and events. Otherwise exclude_rows
+    # tables keep their structure and triggers but skip their rows,
+    # exclude_tables tables/views are left out entirely.
     dump_args=()
-    resolve_ignore_table_args DB_EXCLUDE_ROWS --ignore-table-data dump_args \
-        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
-    resolve_ignore_table_args DB_EXCLUDE_TABLES --ignore-table dump_args \
-        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
+    if [[ "${FULL}" == "true" ]]; then
+        dump_args+=(--routines --events)
+    else
+        resolve_ignore_table_args DB_EXCLUDE_ROWS --ignore-table-data dump_args \
+            "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
+        resolve_ignore_table_args DB_EXCLUDE_TABLES --ignore-table dump_args \
+            "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
+    fi
 
     # --default-character-set=utf8mb4 on every mariadb/mariadb-dump call (here and in
     # db:import above): without it, the client library's own default (latin1) silently

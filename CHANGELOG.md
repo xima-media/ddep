@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `db:export --full`: no `exclude_rows`/`exclude_tables`, plus stored routines
+  and events, for moving a database to another server.
 - `db:import` runs one import per environment at a time. An interrupted import
   keeps running on the remote host and finishes on its own.
 

@@ -313,6 +313,9 @@ is only changed by a dump that arrived complete:
   need room for one compressed dump during an export or import. Running out
   fails the command before anything is changed.
 
+For moving a database to another server, use `db:export --full`: no
+`exclude_rows`/`exclude_tables`, plus stored routines and events.
+
 ## Options
 
 Options must always come before the command - `host`/`environment`/`cmd` are
@@ -322,6 +325,7 @@ positional, after the command, not flags (see [Commands](#commands) above).
 |--------|--------------|
 | `--debug` | Enable bash execution tracing |
 | `--force` | Skip the confirmation prompt for destructive operations (`db:import`, `media:push`). Required for non-interactive/CI use |
+| `--full` | `db:export` only: dump everything, ignoring `exclude_rows`/`exclude_tables`, including stored routines and events - for moving a database to another server |
 | `--no-migration` | `db:pull` only: skip the local `db.migration` after the import, e.g. if your own `db.migration` only works in the remote container |
 | `-h`, `--help` | Show usage and exit |
 | `-V`, `--version` | Show version and exit |
@@ -356,6 +360,9 @@ ddep db:import dev feature_xyz < dump.sql.gz
 
 # Export the dev database to a dump file (already gzip-compressed)
 ddep db:export dev feature_xyz > dump.sql.gz
+
+# Export everything (no exclusions, plus routines and events) for a server move
+ddep --full db:export live main > dump.sql.gz
 
 # Pipe an existing dump directly into the remote database
 cat dump.sql.gz | ddep db:import dev feature_xyz
