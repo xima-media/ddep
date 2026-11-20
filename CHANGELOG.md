@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.4.0] - 2026-11-20
+## [2.0.0] - 2026-11-20
+
+Upgrading from 1.x:
+
+- `mariadb_version` must be 10.6 or newer.
+- `db:import` stops at the first failing statement instead of skipping it,
+  and refuses dumps without the `-- Dump completed` footer (e.g. written with
+  `--skip-comments`) as well as dumps made by ddep before 2.0 - export those
+  again.
+- A view that is in the dump (not in `exclude_tables`) is now imported, so a
+  `db.migration` recreating it should use `CREATE OR REPLACE VIEW`.
 
 ### Added
 
