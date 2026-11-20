@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-20
+
+Upgrading from 1.x:
+
+- `mariadb_version` must be 10.6 or newer.
+- `db:import` stops at the first failing statement instead of skipping it,
+  and refuses dumps without the `-- Dump completed` footer (e.g. written with
+  `--skip-comments`) as well as dumps made by ddep before 2.0 - export those
+  again.
+- A view that is in the dump (not in `exclude_tables`) is now imported, so a
+  `db.migration` recreating it should use `CREATE OR REPLACE VIEW`.
+
+### Added
+
+- `db:export --full`: no `exclude_rows`/`exclude_tables`, plus stored routines
+  and events, for moving a database to another server.
+- `db:import` runs one import per environment at a time. An interrupted import
+  keeps running on the remote host and finishes on its own.
+
+### Changed
+
+- yq image updated to 4.54.3 (pinned by its multi-arch digest).
+
+### Removed
+
+- The warning for `app`/`hosts`/`compose_projects_root` in `.docker/ddep.json`
+  (the format before `.docker/hosts.yaml`). They are still ignored there.
+
+### Fixed
+
+- `db:export` fails when `mariadb-dump` fails. A dump aborting halfway (e.g.
+  `Error 2013: Lost connection to server during query`) used to end the stream
+  early with exit 0, so `db:pull` imported a truncated database and reported
+  success.
+- `db:pull` downloads the complete export before importing it. Streaming it
+  straight into `ddev import-db` throttled the remote `mariadb-dump` until the
+  server dropped the connection on large tables.
+- `db:export` dumps structure and data in one `mariadb-dump` run, so both come
+  from the same snapshot. `exclude_rows` uses `--ignore-table-data`, which
+  needs a `mariadb_version` of 10.6 or newer.
+- Triggers are dumped once, after their table's data. They used to be dumped
+  with the structure as well, so they fired for every imported row (e.g. an
+  audit trigger added rows) and the second copy failed silently.
+- `db:export` writes binary columns as hex (`--hex-blob`).
+- `db:export` writes the dump to stdout only once it is complete and verified.
+  It dumps to a file inside the remote container, checks the `mariadb-dump` exit
+  code, gzip integrity and the `-- Dump completed` footer, only then sends
+  the file, and checks it again after the transfer. A slow network or reader
+  no longer stalls `mariadb-dump` into the server's `net_write_timeout`.
+- `db:import` verifies the dump before changing anything, so a truncated or
+  damaged dump is refused, and copies it completely to the remote host
+  (`docker cp`) before the import starts, so a connection dropping during the
+  transfer no longer leaves a half-imported database. Every dump must end with
+  the `-- Dump completed` footer.
+- `db:import` no longer ignores failing statements (`mariadb --force`). A row
+  larger than `max_allowed_packet`, for example, used to empty the whole table
+  with exit 0. Now the import stops at the first failing statement and exits
+  non-zero.
+- `db:import` rewrites the `DEFINER` of views, triggers, events and routines to
+  `CURRENT_USER`. Objects dumped under another database user were silently
+  missing after the import.
+- `db:import` refuses dumps from ddep before 2.0 before anything is dropped:
+  they define every trigger twice, so the import could stop halfway, and the
+  first copy fired for every imported row.
+- `db:push` keeps the triggers of `exclude_rows` tables and only drops their
+  rows, also for dumps with one row per line (MariaDB 11+).
+- `db:push` no longer drops the end of the dump (restored session settings,
+  `-- Dump completed` footer) when its last view or table is in
+  `exclude_tables`; `db:import` refuses a dump without that footer.
+
 ## [1.3.1] - 2026-11-09
 
 ### Fixed

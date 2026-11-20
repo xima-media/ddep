@@ -6,7 +6,7 @@
 set -euo pipefail
 DEBUG=false
 # Bumped on release; keep in sync with the git tag used for composer.
-DDEP_VERSION="1.3.1"
+DDEP_VERSION="2.0.0"
 
 # Same codes as docker-compose-deploy's own deploy.sh. Only when stderr is a
 # terminal - never for output piped/redirected elsewhere (e.g. a CI log file).
@@ -24,7 +24,7 @@ LOCAL_CONFIG_FILE="$(pwd)/.docker/ddep.json"
 HOSTS_FILE="$(pwd)/.docker/hosts.yaml"
 # Pinned by tag+digest, matching this org's convention elsewhere
 # (docker-compose-deploy). See run_yq for why this isn't just "require yq on PATH".
-YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025"
+YQ_IMAGE="mikefarah/yq:4.54.3@sha256:7834187596ad56fd5a81436114e0b0b9dd54c91bb43946d1f7145b2be5f9c3d2"
 # "app", "hosts", and "compose_projects_root" always come from .docker/hosts.yaml
 # (required), never from .docker/ddep.json, even as a fallback - see
 # load_hosts_config/load_config.
@@ -52,10 +52,9 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # db.exclude_rows: schema kept, only rows are skipped - for live per-environment
 #   state (e.g. sessions) that the app's own schema still manages.
 # db.exclude_tables: dropped entirely, structure and data both - for tables/views
-#   that shouldn't exist in the dump at all (e.g. one exposing a DEFINER tied to
-#   its origin server).
-# A ddep.json still setting "app"/"hosts" (the pre-hosts.yaml schema) has both
-# ignored, with a warning - see load_config.
+#   that shouldn't exist in the dump at all and that the target recreates
+#   itself, if needed (see README "Overrides").
+# "app"/"hosts"/"compose_projects_root" in ddep.json are ignored - see load_config.
 
 # Requirements (local machine):
 #   jq, docker, ssh, rsync, gzip
@@ -78,12 +77,13 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # Commands:
 #   media:push [host] [env]  Push local media files to the remote application container
 #   media:pull [host] [env]  Pull media files from the remote application container
-#   db:import [host] [env]   Drop all tables/views in the remote database, import a
-#                             database dump (read from stdin) into it, then run the
-#                             application's DB migration. A gzip-compressed stream is
+#   db:import [host] [env]   Verify a database dump (read from stdin), drop all
+#                             tables/views in the remote database, import the dump,
+#                             then run the application's DB migration. A gzip-compressed stream is
 #                             detected and passed through; plain SQL is
 #                             gzip-compressed here before it is sent.
-#   db:export [host] [env]   Export the remote database to stdout as a gzip stream.
+#   db:export [host] [env]   Export the remote database to stdout as a gzip stream,
+#                             written only once complete and verified.
 #                             db.exclude_rows tables keep their schema but skip rows;
 #                             db.exclude_tables tables/views are dropped entirely.
 #   db:pull [host] [env]     Local-dev convenience wrapper: db:export from the
@@ -123,6 +123,9 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #   --force                 Skip the confirmation prompt for destructive
 #                           operations (db:import, media:push). Required for
 #                           non-interactive/CI use.
+#   --full                  db:export only: no db.exclude_rows/db.exclude_tables,
+#                           plus stored routines and events (moving a database
+#                           to another server).
 #   --no-migration          db:pull only: skip the local DB migration after the
 #                           import (for a db.migration that only works in the
 #                           remote container).
@@ -130,8 +133,8 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # Configuration:
 #   Built-in defaults, deep-merged with .docker/ddep.json (optional, per-application
 #   setting overrides), overlaid with .docker/hosts.yaml's "app"/"hosts"/
-#   "compose_projects_root" - all three required, and exclusively hosts.yaml's (ddep.json
-#   setting them is ignored, with a warning) - see the schema above.
+#   "compose_projects_root" - all three required, and exclusively hosts.yaml's (ignored
+#   in ddep.json) - see the schema above.
 #
 # Examples:
 #
@@ -187,8 +190,8 @@ Usage: ddep [options] <command> [host] [environment]
 Commands:
   media:push [host] [env]  Push local media files to the remote application container
   media:pull [host] [env]  Pull media files from the remote application container
-  db:import [host] [env]   Drop all remote tables/views, import a database dump
-                            (stdin, plain SQL or gzip), then migrate
+  db:import [host] [env]   Verify a database dump (stdin, plain SQL or gzip), replace
+                            the remote database with it, then migrate
   db:export [host] [env]   Export the remote database to stdout, gzip-compressed
   db:pull [host] [env]     db:export piped into `ddev import-db`, then migrate
                             locally via `ddev exec` (requires ddev)
@@ -207,6 +210,7 @@ Commands:
 
 Options:
   --force         Skip confirmation for destructive ops (db:import, media:push)
+  --full          db:export only: no exclusions, plus routines and events
   --no-migration  db:pull only: skip the local migration after the import
   --debug         Enable bash execution tracing
   -h, --help      Show this help and exit
@@ -431,15 +435,9 @@ load_config() {
     if [[ -f "${local_config}" ]]; then
         local_json="$(cat "${local_config}")"
 
-        # Pre-hosts.yaml ddep.json schema - ignored now, never a fallback.
         # app/hosts/compose_projects_root are exclusively load_hosts_config's
         # concern (see below) - ddep.json never contributes to them at all.
-        if jq -e '(.app != null) or (.hosts != null) or (.compose_projects_root != null)' <<< "${local_json}" >/dev/null; then
-            echo "${COLOR_YELLOW}Warning: ${local_config} sets \"app\"/\"hosts\"/\"compose_projects_root\" - all" >&2
-            echo "         ignored. These are required in ${HOSTS_FILE} instead - remove them" >&2
-            echo "         from ${local_config}.${COLOR_RESET}" >&2
-            local_json="$(jq 'del(.app, .hosts, .compose_projects_root)' <<< "${local_json}")"
-        fi
+        local_json="$(jq 'del(.app, .hosts, .compose_projects_root)' <<< "${local_json}")"
     fi
 
     # load_hosts_config's app/hosts/compose_projects_root and this
@@ -658,7 +656,7 @@ mariadb_ssl_args() {
 # for a trivial remote command like `true`, so without -n it silently consumes
 # however many bytes it buffers off the front of the dump before the connection
 # tears down (non-deterministic - depends on ssh's own timing), leaving
-# db:import's own `cat > tmpfile` (which runs much later) with a truncated,
+# db:import's own stdin buffering (which runs much later) with a truncated,
 # mid-stream start. Confirmed as the actual cause of intermittent db:import
 # corruption that no amount of gzip/charset/binary-mode/FK-checks tuning fixed,
 # since none of those ever touched the real problem: data already missing
@@ -842,14 +840,14 @@ confirm_destructive() {
 
 # Resolves a set of exclude_rows/exclude_tables regex patterns (JSON array,
 # already loaded into a bash array by the caller) against the remote database's
-# actual table/view names, appending "--ignore-table=db.name" for each match
-# into the nameref array. Separate from db:export's structure/data dump calls so
-# exclude_rows and exclude_tables can each be resolved to their own args and
-# applied to different halves of the dump.
+# actual table/view names, appending "<option>=db.name" for each match into the
+# nameref array: --ignore-table-data for exclude_rows, --ignore-table for
+# exclude_tables.
 resolve_ignore_table_args() {
     local -n _patterns=$1
-    local -n _ignore_args=$2
-    local db_host="$3" db_port="$4" db_user="$5" db_password="$6" db_name="$7" db_ssl="$8"
+    local option="$2"
+    local -n _ignore_args=$3
+    local db_host="$4" db_port="$5" db_user="$6" db_password="$7" db_name="$8" db_ssl="$9"
 
     if [ "${#_patterns[@]}" -eq 0 ]; then
         return 0
@@ -883,8 +881,106 @@ resolve_ignore_table_args() {
 
     local table
     for table in ${tables}; do
-        _ignore_args+=( "--ignore-table=${db_name}.${table}" )
+        _ignore_args+=( "${option}=${db_name}.${table}" )
     done
+}
+
+# POSIX sh (the mariadb image's sh is dash: no pipefail, no arrays). Verifies a
+# dump in the export container, again locally once db:export received it, and
+# locally for db:import's stdin. The local check after the export is required:
+# docker run reports the container's exit code, not whether all of its output
+# arrived - a connection (proxy, firewall, SSH) dropping the output stream
+# still ends with exit 0. The gzip data must be intact (its checksum
+# and length catch a cut or damaged file), and the SQL must end with the footer
+# mariadb-dump/mysqldump only write after a successful run (catches a dump that
+# stopped early but was compressed cleanly).
+DUMP_SH_LIB=$(cat <<'SH'
+verify_dump() {
+    if ! gzip -t "$1" 2>/dev/null; then
+        echo "ddep: dump verification failed: gzip data is truncated or damaged" >&2; return 1
+    fi
+    case "$(gzip -dc "$1" | tail -n 1)" in
+        "-- Dump completed"*) ;;
+        *) echo "ddep: dump verification failed: it does not end with mariadb-dump's \"-- Dump completed\" footer (incomplete, or written without comments)" >&2; return 1 ;;
+    esac
+}
+SH
+)
+
+# Runs inside the export container. Positional: host port user ssl-option
+# (may be empty) database, then extra mariadb-dump options. A single
+# mariadb-dump run, so structure, data and triggers come from one snapshot and
+# triggers follow their table's data (created before the data, they would fire
+# while it is imported). Dumped to a file inside the container, so a slow
+# network or reader can't stall mariadb-dump into the server's
+# net_write_timeout, then verified and only then written to stdout. The pipe's
+# status is gzip's alone (no pipefail), so verify_dump is what catches a failed
+# mariadb-dump (it writes the footer only after a successful run) or a failed
+# write (gzip -t).
+EXPORT_SH=$(cat <<'SH'
+h=$1 p=$2 u=$3 ssl=$4 db=$5
+shift 5
+f=/tmp/ddep-dump.sql.gz
+mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" ${ssl:+"$ssl"} \
+    --single-transaction --skip-lock-tables --hex-blob "$@" "$db" | gzip > "$f"
+verify_dump "$f" || exit 1
+cat "$f"
+SH
+)
+
+# Runs inside the import container. Positional: host port user ssl-option
+# (may be empty) database drop-query. Exits non-zero when dropping or importing
+# failed, leaving the database incomplete.
+# The DEFINER rewrite lets views/triggers/events/routines dumped under another
+# user import under this connection's user (SET USER privilege otherwise). It
+# only matches the line starts mariadb-dump/mysqldump write for those objects;
+# row data lines start with "INSERT INTO" or "(" (newlines inside values are
+# escaped), so row data is never rewritten. Without --force, the first failing
+# statement aborts the import instead of being skipped.
+IMPORT_SH=$(cat <<'SH'
+h=$1 p=$2 u=$3 ssl=$4 db=$5 q=$6
+m() {
+    mariadb --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" ${ssl:+"$ssl"} "$@" "$db"
+}
+drops=$(m --skip-column-names --batch --raw --execute="$q") || exit 1
+printf '%s\n' "SET FOREIGN_KEY_CHECKS=0;" "$drops" | m || exit 1
+{ gzip -dc /tmp/ddep-import.sql.gz || echo "$?" > /tmp/ddep-gunzip-failed; } \
+    | sed -E 's#^(/\*!50013 |/\*!50003 CREATE\*/ /\*!50017 |/\*!50106 CREATE\*/ /\*!50117 |CREATE )DEFINER=`[^`]*`@`[^`]*`#\1DEFINER=CURRENT_USER#' \
+    | m --max-allowed-packet=1G || exit 1
+[ -e /tmp/ddep-gunzip-failed ] && exit 1
+exit 0
+SH
+)
+
+# Verifies a local dump file with the same verify_dump the export container uses.
+verify_dump_file() {
+    sh -c "${DUMP_SH_LIB}"'
+verify_dump "$1"' sh "$1"
+}
+
+# ddep before 2.0 dumped structure and data separately, so its dumps have more
+# than one "-- Dump completed" footer and define every trigger twice: the
+# second CREATE TRIGGER fails, and the first one fires for every imported row.
+# Such a dump is refused before anything is dropped.
+refuse_legacy_dump() {
+    if gzip -dc "$1" | awk '/^-- Dump completed/ { footers++ } END { exit !(footers > 1) }'; then
+        echo "${COLOR_RED}Error: this dump was made by ddep before 2.0 (structure and data in two parts). Export it again with ddep 2.0 or newer; nothing was changed.${COLOR_RESET}" >&2
+        return 1
+    fi
+}
+
+# Creates (not starts) the import container on the remote host, printing its
+# id. The dump is copied in with docker cp before the container starts, so a
+# connection dropping mid-transfer fails before anything is dropped, and once
+# started the import runs on its own. The fixed name allows one import per
+# environment at a time.
+create_import_container() {
+    (
+        { set +x; } 2>/dev/null
+        export MYSQL_PWD="${db_password}"
+        docker create --add-host=host.docker.internal:host-gateway -e MYSQL_PWD \
+            --name "$1" "mariadb:${MARIADB_VERSION}" sh -c "${IMPORT_SH}" sh "${@:2}"
+    )
 }
 
 # Allow sourcing (e.g. from tests) to load the functions above without running
@@ -898,8 +994,10 @@ command=""
 host=""
 target_env=""
 exec_command=""
-tmpfile=""
+tmpdir=""
+import_container=""
 FORCE=false
+FULL=false
 NO_MIGRATION=false
 
 # Populated via namerefs by get_container_id and get_mariadb_credentials.
@@ -915,7 +1013,13 @@ cleanup() {
     # in an EXIT trap would otherwise become the script's exit code.
     local exit_code=$?
     [[ -n "${CONFIG_FILE:-}" ]] && rm -f "${CONFIG_FILE}"
-    [[ -n "${tmpfile:-}" ]] && rm -f "${tmpfile}"
+    [[ -n "${tmpdir:-}" ]] && rm -rf "${tmpdir}"
+    # An import container still running (the connection dropped, or ddep was
+    # interrupted) is left to finish on its own instead of being killed halfway.
+    # docker rm without -f refuses a running container.
+    if [[ -n "${import_container:-}" ]] && ! docker rm "${import_container}" >/dev/null 2>&1; then
+        echo "${COLOR_YELLOW}Warning: could not remove the import container ${import_container} on '${host}'; if the import is still running, it finishes on its own. Check it with: docker -H ssh://${REMOTE_DOCKER_HOST} logs ${import_container}${COLOR_RESET}" >&2
+    fi
     exit "${exit_code}"
 }
 trap cleanup EXIT
@@ -943,6 +1047,10 @@ while [[ $# -gt 0 && -z "${command}" ]]; do
             FORCE=true
             shift
             ;;
+        --full)
+            FULL=true
+            shift
+            ;;
         --no-migration)
             NO_MIGRATION=true
             shift
@@ -964,6 +1072,11 @@ fi
 
 if [[ "${NO_MIGRATION}" == "true" && "${command}" != "db:pull" ]]; then
     echo "${COLOR_RED}Error: --no-migration only applies to db:pull.${COLOR_RESET}" >&2
+    exit 1
+fi
+
+if [[ "${FULL}" == "true" && "${command}" != "db:export" ]]; then
+    echo "${COLOR_RED}Error: --full only applies to db:export.${COLOR_RESET}" >&2
     exit 1
 fi
 
@@ -1150,26 +1263,29 @@ elif [ "${command}" = "db:import" ]; then
         exit 1
     fi
 
-    # Buffer stdin to a file; cleanup runs via the global EXIT trap.
-    tmpfile=$(mktemp)
-    cat > "${tmpfile}"
+    # Buffer stdin to a file; cleanup runs via the global EXIT trap. stdin
+    # ending says nothing about whether whatever wrote to it finished, so the
+    # file is verified before anything is changed.
+    tmpdir=$(mktemp -d)
+    dump_file="${tmpdir}/dump.sql.gz"
+    cat > "${tmpdir}/input"
 
-    # ddep db:export emits a gzip stream (its two dumps concatenated as a
-    # multi-member gzip stream); detect that by magic byte so a plain-SQL dump
-    # piped in some other way (e.g. a raw mariadb-dump/TYPO3 export) still works,
-    # by compressing it here instead. Either way, the file that crosses the
-    # SSH-tunnelled Docker connection below is compressed, not plain SQL.
-    if [ "$(head -c2 "${tmpfile}" | od -An -tx1 | tr -d ' \n')" != "1f8b" ]; then
-        gzip -c "${tmpfile}" > "${tmpfile}.gz"
-        mv "${tmpfile}.gz" "${tmpfile}"
+    # db:export emits gzip; detect that by magic byte so a plain-SQL dump (e.g.
+    # a raw mariadb-dump) still works, by compressing it here instead. Either
+    # way, the file that crosses the SSH-tunnelled Docker connection below is
+    # compressed, not plain SQL.
+    if [ "$(head -c2 "${tmpdir}/input" | od -An -tx1 | tr -d ' \n')" != "1f8b" ]; then
+        gzip -c "${tmpdir}/input" > "${dump_file}"
+        rm -f "${tmpdir}/input"
+    else
+        mv "${tmpdir}/input" "${dump_file}"
     fi
 
-    # gzip always writes a header, so empty stdin yields a valid-but-empty archive;
-    # verify the decompressed stream actually contains data before proceeding.
-    if [ -z "$(gunzip -c "${tmpfile}" | head -c1)" ]; then
-        echo "${COLOR_RED}Error: no data received on stdin; aborting db:import.${COLOR_RESET}" >&2
+    if ! verify_dump_file "${dump_file}"; then
+        echo "${COLOR_RED}Error: the dump is incomplete or damaged; nothing was changed.${COLOR_RESET}" >&2
         exit 1
     fi
+    refuse_legacy_dump "${dump_file}"
 
     confirm_destructive "drop all tables/views in the remote database, import the dump and run migrations"
 
@@ -1178,45 +1294,35 @@ elif [ "${command}" = "db:import" ]; then
     ssl_args=()
     mariadb_ssl_args ssl_args "${db_ssl}"
 
-    # Send the compressed dump as-is and gunzip it inside the container, so the
-    # SSH-tunnelled Docker connection carries compressed bytes instead of plain
-    # SQL — meaningfully faster for large dumps over a slow/distant link.
-    # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
-    # (set -x) never echoes the password; it stays scoped to the mariadb run and
-    # is still forwarded via -e (not -p), so it never appears in argv either.
-    #
-    # --force: a dump from anywhere other than this same app's own db:export (a
-    # plain mariadb-dump, ddev export-db, ...) can contain statements this
-    # connection's user can't run as-is - e.g. a view's CREATE carrying a
-    # DEFINER from wherever it was dumped, which fails with "Access denied;
-    # you need ... SET USER ... privilege" for any other user (confirmed
-    # against a real run). Without --force, mariadb aborts the whole import on
-    # that first error, so the migration below - which is what actually
-    # re-creates such a view correctly (db.migration, chained with a raw-SQL
-    # step) - never even runs. --force logs the failing statement and moves
-    # on instead, importing everything else; confirmed it also exits 0
-    # (not just continuing past the error, but not failing this whole
-    # subshell either), so it doesn't trip this script's own set -e before
-    # reaching the migration step.
+    # The verified dump is copied into the import container, which drops and
+    # imports (IMPORT_SH), see create_import_container.
     #
     # Every table/view is dropped first: a dump only replaces the tables it
     # contains, so tables that exist only in the target (e.g. created by a
     # newer branch's code or migration) would otherwise survive while the
     # dump's migration history no longer knows about them, and the migration
-    # below fails with "Table ... already exists". The drop runs without
-    # --force and under set -e, so a failed drop aborts before the import.
+    # below fails with "Table ... already exists".
     drop_query="SELECT CONCAT('DROP ', IF(TABLE_TYPE = 'VIEW', 'VIEW', 'TABLE'), ' IF EXISTS \`', REPLACE(TABLE_NAME, '\`', '\`\`'), '\`;') FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()"
-    (
-        { set +x; } 2>/dev/null
-        export MYSQL_PWD="${db_password}"
-        docker run --rm -i --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'set -e; h="$1"; p="$2"; u="$3"; q="$4"; shift 4
-                drops=$(mariadb --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --skip-column-names --batch --raw --execute="$q" "$@")
-                printf "%s\n" "SET FOREIGN_KEY_CHECKS=0;" "$drops" | mariadb --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" "$@"
-                gunzip -c | mariadb --force --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" "$@"' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${drop_query}" "${ssl_args[@]}" "${db_name}" \
-            < "${tmpfile}"
-    )
+    import_name="ddep-import-${git_project_name}_${target_env}"
+    # A finished leftover from an interrupted run is removed. One that is
+    # running, or created but not started yet (another import still copying
+    # its dump), counts as an import in progress.
+    if [[ -n "$(docker ps -aq --filter "name=^${import_name}\$")" ]]; then
+        if [[ -z "$(docker ps -aq --filter "name=^${import_name}\$" --filter status=exited)" ]] || ! docker rm "${import_name}" >/dev/null 2>&1; then
+            echo "${COLOR_RED}Error: another import into '${target_env}' is in progress (container ${import_name} on '${host}'). If none is, remove it: docker -H ssh://${REMOTE_DOCKER_HOST} rm ${import_name}${COLOR_RESET}" >&2
+            exit 1
+        fi
+    fi
+
+    import_container=$(create_import_container "${import_name}" \
+        "${db_host}" "${db_port}" "${db_user}" "${ssl_args[0]:-}" "${db_name}" "${drop_query}")
+    docker cp "${dump_file}" "${import_container}:/tmp/ddep-import.sql.gz"
+    if ! docker start -a "${import_container}" >&2; then
+        echo "${COLOR_RED}Error: the import failed or the connection was lost (see above) - the database may be incomplete. Fix the cause and import again.${COLOR_RESET}" >&2
+        exit 1
+    fi
+    docker rm "${import_container}" >/dev/null
+    import_container=""
 
     # The DB import already succeeded; a missing/ambiguous container here only
     # means the migration is skipped, so this is a warning, not a fatal error.
@@ -1241,40 +1347,49 @@ elif [ "${command}" = "db:export" ]; then
     ssl_args=()
     mariadb_ssl_args ssl_args "${db_ssl}"
 
-    # exclude_rows: schema kept, only rows skipped - applied to the data dump only.
-    # exclude_tables: dropped entirely - applied to both the structure and data dump.
-    rows_ignore_args=()
-    resolve_ignore_table_args DB_EXCLUDE_ROWS rows_ignore_args \
-        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
-
-    tables_ignore_args=()
-    resolve_ignore_table_args DB_EXCLUDE_TABLES tables_ignore_args \
-        "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
+    # --full: everything, for moving a database to another server - no
+    # exclusions, plus stored routines and events. Otherwise exclude_rows
+    # tables keep their structure and triggers but skip their rows,
+    # exclude_tables tables/views are left out entirely.
+    dump_args=()
+    if [[ "${FULL}" == "true" ]]; then
+        dump_args+=(--routines --events)
+    else
+        resolve_ignore_table_args DB_EXCLUDE_ROWS --ignore-table-data dump_args \
+            "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
+        resolve_ignore_table_args DB_EXCLUDE_TABLES --ignore-table dump_args \
+            "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
+    fi
 
     # --default-character-set=utf8mb4 on every mariadb/mariadb-dump call (here and in
-    # db:import below): without it, the client library's own default (latin1) silently
+    # db:import above): without it, the client library's own default (latin1) silently
     # mangles multi-byte UTF-8 content on the way through - confirmed against a real
     # dump containing German typographic quotes, which corrupted into stray bytes that
     # broke SQL statement quoting entirely (not just mojibake) once re-imported.
     #
-    # Dump structure and data separately, each gzip-compressed inside the
-    # container before it crosses the SSH-tunnelled Docker connection, then
-    # concatenated into one multi-member gzip stream on stdout (gunzip handles
-    # concatenated gzip members transparently, decompressing back-to-back).
+    # The dump is written and verified inside the export container (EXPORT_SH),
+    # which only then sends it. It lands in a local file first and reaches
+    # stdout only once it is verified again here, so stdout receives nothing
+    # unless the dump is complete. --rm: the daemon removes the container, and the
+    # dump inside it, even if this side loses the connection.
     # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
     # never echoes it, and forwarded via -e (not -p) so it never appears in argv.
-    (
+    tmpdir=$(mktemp -d)
+    if ! (
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
-
         docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-data "$@" | gzip' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
-
-        docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" | gzip' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
-    )
+            sh -c "${DUMP_SH_LIB}
+${EXPORT_SH}" sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[0]:-}" "${db_name}" "${dump_args[@]}"
+    ) > "${tmpdir}/dump.sql.gz"; then
+        echo "${COLOR_RED}Error: the database export failed (see above).${COLOR_RESET}" >&2
+        exit 1
+    fi
+    if ! verify_dump_file "${tmpdir}/dump.sql.gz"; then
+        echo "${COLOR_RED}Error: the dump arrived incomplete (connection dropped?).${COLOR_RESET}" >&2
+        exit 1
+    fi
+    cat "${tmpdir}/dump.sql.gz"
 
 elif [ "${command}" = "db:pull" ]; then
     # Local-dev convenience wrapper: db:export from the remote (host/
@@ -1289,7 +1404,14 @@ elif [ "${command}" = "db:pull" ]; then
     # has DOCKER_HOST=ssh://<remote host> exported for the remote side, which
     # ddev's own internal docker calls would otherwise inherit and query
     # instead of the local daemon its db container runs on.
-    DDEP_CHILD_INVOCATION=true "$0" db:export "${host}" "${target_env}" | gzip -dc | DOCKER_HOST='' ddev import-db
+    #
+    # The export goes to a temp file first and is only imported once db:export
+    # succeeded, which it only does for a complete, verified dump (cleanup runs
+    # via the global EXIT trap), so a failed export never leaves a partially
+    # imported local database.
+    tmpdir=$(mktemp -d)
+    DDEP_CHILD_INVOCATION=true "$0" db:export "${host}" "${target_env}" > "${tmpdir}/dump.sql.gz"
+    gzip -dc "${tmpdir}/dump.sql.gz" | DOCKER_HOST='' ddev import-db
 
     # Same db.migration as db:import runs remotely, so exclude_tables views,
     # pending migrations of the local branch etc. exist locally too. One
@@ -1313,7 +1435,13 @@ elif [ "${command}" = "db:push" ]; then
     # to an inner script's "$@" the way `docker exec` does (confirmed against
     # a real project), which rules out mirroring db:export's --ignore-table
     # approach directly. exclude_tables suppresses a table/view's structure
-    # and data both; exclude_rows only its data section.
+    # and data both; exclude_rows only its INSERT statements (one line, or
+    # since MariaDB 11 one row per line until the closing ";") up to the end
+    # of its data block (UNLOCK TABLES, or the DELIMITER line that starts its
+    # triggers), so trigger bodies containing INSERT statements stay intact.
+    # Events, routines and the closing block (session settings restored,
+    # "-- Dump completed" footer that db:import requires) are never
+    # suppressed, even when the last view or table before them is excluded.
     #
     # --force/--debug are forwarded to the db:import child invocation (which
     # is what actually prompts for confirmation), not consumed here.
@@ -1337,25 +1465,35 @@ elif [ "${command}" = "db:push" ]; then
     # truncated dump to db:import. The markers matched below are pure ASCII,
     # so byte-wise processing is equivalent and safe.
     DOCKER_HOST='' ddev export-db | gzip -dc | LC_ALL=C awk -v exclude_rows="${rows_regex}" -v exclude_tables="${tables_regex}" '
-        BEGIN { suppress = 0 }
+        BEGIN { suppress = 0; suppress_rows = 0; in_insert = 0 }
         /^-- Table structure for table `/ || /^-- Temporary table structure for view `/ {
             name = $0
             sub(/^-- (Table structure for table|Temporary table structure for view) `/, "", name)
             sub(/`.*/, "", name)
             suppress = (exclude_tables != "" && name ~ exclude_tables)
+            suppress_rows = 0
         }
         /^-- Dumping data for table `/ {
             name = $0
             sub(/^-- Dumping data for table `/, "", name)
             sub(/`.*/, "", name)
-            suppress = (exclude_tables != "" && name ~ exclude_tables) || (exclude_rows != "" && name ~ exclude_rows)
+            suppress = (exclude_tables != "" && name ~ exclude_tables)
+            suppress_rows = (exclude_rows != "" && name ~ exclude_rows)
         }
         /^-- Final view structure for view `/ {
             name = $0
             sub(/^-- Final view structure for view `/, "", name)
             sub(/`.*/, "", name)
             suppress = (exclude_tables != "" && name ~ exclude_tables)
+            suppress_rows = 0
         }
+        /^\/\*!40103 SET TIME_ZONE=@OLD_TIME_ZONE \*\/;/ || /^-- Dumping (events|routines) for database / || /^-- Dump completed/ {
+            suppress = 0
+            suppress_rows = 0
+        }
+        /^UNLOCK TABLES;/ || /^DELIMITER / { suppress_rows = 0 }
+        suppress_rows && /^INSERT INTO / { in_insert = 1 }
+        in_insert { if (/;$/) in_insert = 0; next }
         { if (!suppress) print }
     ' | DDEP_CHILD_INVOCATION=true "$0" "${import_args[@]}"
 fi

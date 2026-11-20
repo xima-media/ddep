@@ -486,7 +486,7 @@ YAML
     [[ "$stderr" == *"compose_projects_root"* ]]
 }
 
-@test "load_config: ddep.json is not allowed to override app/hosts/compose_projects_root - hosts.yaml wins, with a warning" {
+@test "load_config: ddep.json is not allowed to override app/hosts/compose_projects_root - hosts.yaml wins" {
     run --separate-stderr bash -c '
         source "$DDEP"
         HOSTS_FILE="$FIXTURES/hosts.yaml"
@@ -500,7 +500,7 @@ YAML
     [ "${lines[2]}" = "customer-a-user@customer-a-host" ]  # hosts.yaml's own multi-host entry, untouched
     [ "${lines[3]}" = "/opt/docker/compose" ]              # hosts.yaml's own value - NOT local_with_legacy_hosts.json's "/legacy/path"
     [ "${lines[4]}" = "11.4" ]                             # non-app/hosts/compose_projects_root overrides from ddep.json still apply
-    [[ "$stderr" == *"ignored"* ]]                         # warns that ddep.json's app/hosts/compose_projects_root were ignored
+    [ -z "$stderr" ]
 }
 
 @test "--no-migration is rejected for commands other than db:pull" {
@@ -514,4 +514,120 @@ YAML
     [ "$status" -eq 1 ]
     [[ "$output" != *"--no-migration"* ]]
     [[ "$output" != *"Unknown argument"* ]]
+}
+
+# --- dump verification and DEFINER rewrite (sourced)
+
+@test "verify_dump_file accepts an intact dump ending with the completion footer" {
+    printf 'CREATE TABLE t (id INT);\n-- Dump completed on 2026-01-01\n' | gzip > "$BATS_TEST_TMPDIR/d.gz"
+    run bash -c 'source "$DDEP"; verify_dump_file "$1"' _ "$BATS_TEST_TMPDIR/d.gz"
+    [ "$status" -eq 0 ]
+}
+
+@test "verify_dump_file rejects a dump without the completion footer" {
+    printf 'CREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\n' | gzip > "$BATS_TEST_TMPDIR/d.gz"
+    run bash -c 'source "$DDEP"; verify_dump_file "$1"' _ "$BATS_TEST_TMPDIR/d.gz"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Dump completed"* ]]
+}
+
+@test "verify_dump_file rejects truncated gzip data" {
+    { printf 'CREATE TABLE t (id INT);\n'; head -c 200000 /dev/urandom | od -An -tx1; printf -- '-- Dump completed on 2026-01-01\n'; } | gzip > "$BATS_TEST_TMPDIR/d.gz"
+    head -c 50000 "$BATS_TEST_TMPDIR/d.gz" > "$BATS_TEST_TMPDIR/cut.gz"
+    run bash -c 'source "$DDEP"; verify_dump_file "$1"' _ "$BATS_TEST_TMPDIR/cut.gz"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"truncated or damaged"* ]]
+}
+
+@test "verify_dump_file rejects damaged gzip data" {
+    { printf 'CREATE TABLE t (id INT);\n'; head -c 200000 /dev/urandom | od -An -tx1; printf -- '-- Dump completed on 2026-01-01\n'; } | gzip > "$BATS_TEST_TMPDIR/d.gz"
+    printf 'XXXX' | dd of="$BATS_TEST_TMPDIR/d.gz" bs=1 seek=30000 conv=notrunc 2>/dev/null
+    run bash -c 'source "$DDEP"; verify_dump_file "$1"' _ "$BATS_TEST_TMPDIR/d.gz"
+    [ "$status" -ne 0 ]
+}
+
+@test "import DEFINER rewrite covers views, triggers, events and routines but never row data" {
+    local sed_expr
+    sed_expr=$(bash -c 'source "$DDEP"; printf "%s\n" "$IMPORT_SH"' | sed -n "s/^ *| sed -E '\\(.*\\)' \\\\\$/\\1/p")
+    [ -n "$sed_expr" ]
+    run sed -E "$sed_expr" <<'SQL'
+/*!50013 DEFINER=`other`@`%` SQL SECURITY DEFINER */
+/*!50003 CREATE*/ /*!50017 DEFINER=`other`@`%`*/ /*!50003 TRIGGER t_ai AFTER INSERT ON t FOR EACH ROW SET @x = 1 */;;
+/*!50106 CREATE*/ /*!50117 DEFINER=`other`@`%`*/ /*!50106 EVENT `ev` ON SCHEDULE EVERY 1 DAY DO SELECT 1 */ ;;
+CREATE DEFINER=`other`@`%` PROCEDURE `p`()
+INSERT INTO `t` VALUES (1,'DEFINER=`x`@`y`'),(2,'CREATE DEFINER=`x`@`y`');
+(3,'DEFINER=`x`@`y`'),
+(4,'/*!50013 DEFINER=`x`@`y`');
+SQL
+    [ "$status" -eq 0 ]
+    [ "$(grep -c 'DEFINER=CURRENT_USER' <<< "$output")" -eq 4 ]
+    [[ "$output" == *"(1,'DEFINER=\`x\`@\`y\`'),(2,'CREATE DEFINER=\`x\`@\`y\`');"* ]]
+    [[ "$output" == *"(3,'DEFINER=\`x\`@\`y\`'),"* ]]
+    [[ "$output" == *"(4,'/*!50013 DEFINER=\`x\`@\`y\`');"* ]]
+}
+
+@test "--full is rejected for commands other than db:export" {
+    run "$DDEP" --full db:import dev feature_xyz
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"--full only applies to db:export"* ]]
+}
+
+@test "db:push filter keeps the closing block and footer after an excluded last view" {
+    local awk_prog
+    awk_prog=$(sed -n "/LC_ALL=C awk -v exclude_rows/,/^    ' | DDEP_CHILD_INVOCATION/p" "$DDEP" | sed '1s/.*awk -v exclude_rows="${rows_regex}" -v exclude_tables="${tables_regex}" '"'"'//; $d')
+    [ -n "$awk_prog" ]
+    run env LC_ALL=C awk -v exclude_rows='^sessions$' -v exclude_tables='^v$' "$awk_prog" <<'SQL'
+-- Table structure for table `sessions`
+CREATE TABLE `sessions` (`id` int);
+-- Dumping data for table `sessions`
+INSERT INTO `sessions` VALUES
+(1);
+-- Final view structure for view `v`
+/*!50001 VIEW `v` AS select 1 AS `x` */;
+/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+-- Dump completed on 2026-01-01
+SQL
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'CREATE TABLE `sessions`'* ]]
+    [[ "$output" != *'(1);'* ]]
+    [[ "$output" != *'VIEW `v`'* ]]
+    [[ "$output" == *'SET SQL_MODE=@OLD_SQL_MODE'* ]]
+    [[ "$(tail -n 1 <<< "$output")" == "-- Dump completed on 2026-01-01" ]]
+}
+
+@test "db:push filter keeps INSERT statements inside triggers of exclude_rows tables" {
+    local awk_prog
+    awk_prog=$(sed -n "/LC_ALL=C awk -v exclude_rows/,/^    ' | DDEP_CHILD_INVOCATION/p" "$DDEP" | sed '1s/.*awk -v exclude_rows="${rows_regex}" -v exclude_tables="${tables_regex}" '"'"'//; $d')
+    run env LC_ALL=C awk -v exclude_rows='^sessions$' -v exclude_tables='' "$awk_prog" <<'SQL'
+-- Dumping data for table `sessions`
+LOCK TABLES `sessions` WRITE;
+INSERT INTO `sessions` VALUES
+(1);
+UNLOCK TABLES;
+DELIMITER ;;
+/*!50003 CREATE*/ /*!50017 DEFINER=`app`@`%`*/ /*!50003 TRIGGER s_ai AFTER INSERT ON sessions FOR EACH ROW
+BEGIN
+INSERT INTO audit (tid) VALUES (NEW.id);
+END */;;
+DELIMITER ;
+-- Dump completed on 2026-01-01
+SQL
+    [ "$status" -eq 0 ]
+    [[ "$output" != *'(1);'* ]]
+    [[ "$output" == *'INSERT INTO audit (tid) VALUES (NEW.id);'* ]]
+}
+
+@test "refuse_legacy_dump refuses two-part dumps from ddep before 2.0" {
+    local trigger='/*!50003 CREATE*/ /*!50017 DEFINER=`app`@`%`*/ /*!50003 TRIGGER t_ai AFTER INSERT ON t FOR EACH ROW SET @x = 1 */;;'
+    { printf 'CREATE TABLE t (id INT);\n%s\n-- Dump completed on 2026-01-01\n' "$trigger"; printf 'INSERT INTO t VALUES (1);\n%s\n-- Dump completed on 2026-01-01\n' "$trigger"; } | gzip > "$BATS_TEST_TMPDIR/legacy-triggers.gz"
+    { printf 'CREATE TABLE t (id INT);\n-- Dump completed on 2026-01-01\n'; printf 'INSERT INTO t VALUES (1);\n-- Dump completed on 2026-01-01\n'; } | gzip > "$BATS_TEST_TMPDIR/legacy-plain.gz"
+    printf 'CREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\n%s\n-- Dump completed on 2026-01-01\n' "$trigger" | gzip > "$BATS_TEST_TMPDIR/current.gz"
+    run bash -c 'source "$DDEP"; refuse_legacy_dump "$1"' _ "$BATS_TEST_TMPDIR/legacy-triggers.gz"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"made by ddep before 2.0"* ]]
+    run bash -c 'source "$DDEP"; refuse_legacy_dump "$1"' _ "$BATS_TEST_TMPDIR/legacy-plain.gz"
+    [ "$status" -ne 0 ]
+    run bash -c 'source "$DDEP"; refuse_legacy_dump "$1"' _ "$BATS_TEST_TMPDIR/current.gz"
+    [ "$status" -eq 0 ]
 }

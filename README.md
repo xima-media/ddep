@@ -40,7 +40,7 @@ require it as a dev dependency:
 ```
 
 ```sh
-composer require --dev xima/ddep:^1.0
+composer require --dev xima/ddep:^2.0
 ```
 
 This exposes the binary as `vendor/bin/ddep`. Releases are cut as git tags, so
@@ -169,7 +169,7 @@ deliberately empty).
 | Key                       | Required | Description |
 |---------------------------|:--------:|--------------|
 | `compose_projects_root`   | yes | Remote docker-compose base directory. Set in `.docker/hosts.yaml`'s `all.vars.compose_projects_root` - no built-in default, never read from `.docker/ddep.json` |
-| `mariadb_version`         | no  | MariaDB image tag used for dump/restore. Default: `lts` |
+| `mariadb_version`         | no  | MariaDB image tag used for dumps and imports, 10.6 or newer. Default: `lts` |
 | `settings.<app>.*`        | no  | Overrides any built-in setting for that application — see below |
 
 Everything is deep-merged over the script's built-in defaults, so you only
@@ -197,8 +197,6 @@ For example, to replace the built-in `db:export` table-exclude lists for `symfon
 
 ```json
 {
-  "app": "symfony",
-  "hosts": { "dev": "user@dev-host" },
   "settings": {
     "symfony": {
       "db": {
@@ -252,9 +250,9 @@ doesn't affect the other.
 |---------|--------------|
 | `media:push [host] [env]` | Push local media files to the remote application container |
 | `media:pull [host] [env]` | Pull media files from the remote application container |
-| `db:import [host] [env]` | Drop all tables/views in the remote database, import a database dump (read from stdin, plain SQL or gzip) into it, then run the application's DB migration |
-| `db:export [host] [env]` | Export the remote database to stdout, gzip-compressed |
-| `db:pull [host] [env]` | Local-dev convenience wrapper: `db:export` piped into `ddev import-db` for the ddev project in the current working directory, then the application's `db.migration` via `ddev exec` (skip with `--no-migration`). Requires `ddev` on `PATH` |
+| `db:import [host] [env]` | Verify a database dump (read from stdin, plain SQL or gzip), drop all tables/views in the remote database, import the dump, then run the application's DB migration |
+| `db:export [host] [env]` | Export the remote database to stdout, gzip-compressed. Nothing is written unless the dump is complete and verified |
+| `db:pull [host] [env]` | Local-dev convenience wrapper: `db:export` into a local temp file, imported with `ddev import-db` into the ddev project in the current working directory once the export succeeded, then the application's `db.migration` via `ddev exec` (skip with `--no-migration`). Requires `ddev` on `PATH` |
 | `db:push [host] [env]` | Local-dev convenience wrapper, the reverse of `db:pull`: dumps the local ddev project's database (same `exclude_rows`/`exclude_tables` filtering as `db:export`) and pipes it into `db:import`. Requires `ddev` on `PATH` |
 | `ssh [host] [env]` | Open an interactive shell inside the remote container |
 | `host [host] [env]` | Open an interactive shell on the remote docker host, in the environment's docker compose project directory (`<compose_projects_root>/<project>_<env>`) |
@@ -278,12 +276,52 @@ confirmation before running. On non-`dev` hosts you must type the host slug to
 proceed; pass `--force` to skip the prompt (required in CI, where there is no
 terminal).
 
-`db:export`/`db:import` compress the dump *before* it crosses the SSH-tunnelled
-Docker connection (`mariadb-dump | gzip` runs inside the remote container, and
-`db:import` sends the compressed bytes as-is and `gunzip`s them inside the
-container too), not just at rest — meaningfully faster for large databases
-over a slow or distant link. `db:import` also accepts plain, uncompressed SQL on
-stdin (detected automatically) for backward compatibility.
+### Database transfer safety
+
+A dump only moves on once it is complete and verified, and the target database
+is only changed by a dump that arrived complete:
+
+- **`db:export`** runs `mariadb-dump` once (one consistent snapshot) in a
+  container on the remote host and writes it to a file there, so a slow network
+  or reader can't stall the dump. The file is checked there, sent over into a
+  local temp file and checked again before it is written to stdout - `docker
+  run` reports the container's exit code even when the connection lost part of
+  its output. On any failure, stdout stays empty and the exit code is non-zero.
+  The container is removed even if the connection drops, so no dump is left
+  behind on the remote host.
+- **`db:import`** checks the dump locally before anything else, then copies it
+  completely into a container on the remote host (`docker cp`). Only then does
+  that container drop the target's tables/views and import, so a connection
+  dropping during the copy fails before anything is changed. The first failing
+  statement aborts the import with a non-zero exit code; the target is then
+  incomplete and needs a new import. An import interrupted after the copy keeps
+  running on the remote host instead of stopping halfway. One import per
+  environment runs at a time; the lock covers the drop and the import, not the
+  migration that runs afterwards.
+- **Checked means:** the gzip data is intact (its checksum and length catch a
+  cut or damaged transfer), and the SQL ends with the `-- Dump completed` footer
+  `mariadb-dump`/`mysqldump` only write after a successful run (catches a dump
+  that stopped early). This applies to every dump `db:import` receives, also
+  from `ddev export-db` or an older ddep; dumps written with `--skip-comments`
+  (or empty input) are refused. Plain, uncompressed SQL on stdin is
+  detected and compressed automatically.
+- **`DEFINER`s** of views, triggers, events and routines are rewritten to
+  `CURRENT_USER` on import, so objects dumped under another database user import
+  instead of failing. Row data is never rewritten.
+- **Disk space:** the local machine (temp directory) and the remote host each
+  need room for one compressed dump during an export or import; for plain,
+  uncompressed SQL on `db:import`'s stdin, the local machine needs room for the
+  uncompressed dump plus its compressed copy, and `db:pull` needs room for two
+  compressed dumps locally (the export's checked copy and its own). Running out
+  while the dump is staged fails the command before anything is changed; if the
+  database server runs out of space during the import itself, the target is
+  incomplete and the import has to be run again.
+- **Dumps from ddep before 2.0** are refused: they have structure and data in
+  two parts and define every trigger twice, so the import could fail halfway.
+  Export them again.
+
+For moving a database to another server, use `db:export --full`: no
+`exclude_rows`/`exclude_tables`, plus stored routines and events.
 
 ## Options
 
@@ -294,6 +332,7 @@ positional, after the command, not flags (see [Commands](#commands) above).
 |--------|--------------|
 | `--debug` | Enable bash execution tracing |
 | `--force` | Skip the confirmation prompt for destructive operations (`db:import`, `media:push`). Required for non-interactive/CI use |
+| `--full` | `db:export` only: dump everything, ignoring `exclude_rows`/`exclude_tables`, including stored routines and events - for moving a database to another server |
 | `--no-migration` | `db:pull` only: skip the local `db.migration` after the import, e.g. if your own `db.migration` only works in the remote container |
 | `-h`, `--help` | Show usage and exit |
 | `-V`, `--version` | Show version and exit |
@@ -328,6 +367,9 @@ ddep db:import dev feature_xyz < dump.sql.gz
 
 # Export the dev database to a dump file (already gzip-compressed)
 ddep db:export dev feature_xyz > dump.sql.gz
+
+# Export everything (no exclusions, plus routines and events) for a server move
+ddep --full db:export live main > dump.sql.gz
 
 # Pipe an existing dump directly into the remote database
 cat dump.sql.gz | ddep db:import dev feature_xyz
@@ -416,3 +458,8 @@ ddep --force db:import test staging < dump.sql.gz
 | `host '…' is not configured` | The host argument isn't declared anywhere under `all.children.*.hosts` in `.docker/hosts.yaml` (ddep.json's own `hosts`, if it has one, is ignored - see Setup). Run `ddep config \| jq .hosts` to see every currently resolvable value. |
 | `No container found for project '…' and environment '…'` | Wrong environment, the stack isn't running, or `compose_projects_root`/compose labels don't match. |
 | `no environment given and no terminal available` | Non-interactive run (CI/pipe) with no environment argument; pass it explicitly. |
+| `dump verification failed: …` | The dump is truncated, damaged or has no `-- Dump completed` footer. Nothing was changed; export it again. |
+| `the database export failed (see above)` / `the dump arrived incomplete` | `mariadb-dump` failed on the remote host (its error is shown above), or the connection dropped during the transfer. Nothing was written to stdout; run the export again. |
+| `the import failed or the connection was lost (see above) - the database may be incomplete` | A statement in the dump failed (shown above), e.g. a row larger than the server's `max_allowed_packet`, or the connection dropped mid-import. Fix the cause and import again. |
+| `another import into '…' is in progress` | Wait for it; an interrupted import keeps running on the remote host and finishes on its own. If no import is running (e.g. a copy was interrupted), remove the container as shown in the message. |
+| `this dump was made by ddep before 2.0` | Export the database again with ddep 2.0 or newer. Nothing was changed. |
