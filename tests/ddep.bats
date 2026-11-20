@@ -595,3 +595,25 @@ SQL
     [[ "$output" == *'SET SQL_MODE=@OLD_SQL_MODE'* ]]
     [[ "$(tail -n 1 <<< "$output")" == "-- Dump completed on 2026-01-01" ]]
 }
+
+@test "db:push filter keeps INSERT statements inside triggers of exclude_rows tables" {
+    local awk_prog
+    awk_prog=$(sed -n "/LC_ALL=C awk -v exclude_rows/,/^    ' | DDEP_CHILD_INVOCATION/p" "$DDEP" | sed '1s/.*awk -v exclude_rows="${rows_regex}" -v exclude_tables="${tables_regex}" '"'"'//; $d')
+    run env LC_ALL=C awk -v exclude_rows='^sessions$' -v exclude_tables='' "$awk_prog" <<'SQL'
+-- Dumping data for table `sessions`
+LOCK TABLES `sessions` WRITE;
+INSERT INTO `sessions` VALUES
+(1);
+UNLOCK TABLES;
+DELIMITER ;;
+/*!50003 CREATE*/ /*!50017 DEFINER=`app`@`%`*/ /*!50003 TRIGGER s_ai AFTER INSERT ON sessions FOR EACH ROW
+BEGIN
+INSERT INTO audit (tid) VALUES (NEW.id);
+END */;;
+DELIMITER ;
+-- Dump completed on 2026-01-01
+SQL
+    [ "$status" -eq 0 ]
+    [[ "$output" != *'(1);'* ]]
+    [[ "$output" == *'INSERT INTO audit (tid) VALUES (NEW.id);'* ]]
+}

@@ -1428,11 +1428,12 @@ elif [ "${command}" = "db:push" ]; then
     # a real project), which rules out mirroring db:export's --ignore-table
     # approach directly. exclude_tables suppresses a table/view's structure
     # and data both; exclude_rows only its INSERT statements (one line, or
-    # since MariaDB 11 one row per line until the closing ";"), keeping the
-    # table's triggers, which follow its data. Events, routines and the closing
-    # block (session settings restored, "-- Dump completed" footer that
-    # db:import requires) are never suppressed, even when the last view or
-    # table before them is excluded.
+    # since MariaDB 11 one row per line until the closing ";") up to the end
+    # of its data block (UNLOCK TABLES, or the DELIMITER line that starts its
+    # triggers), so trigger bodies containing INSERT statements stay intact.
+    # Events, routines and the closing block (session settings restored,
+    # "-- Dump completed" footer that db:import requires) are never
+    # suppressed, even when the last view or table before them is excluded.
     #
     # --force/--debug are forwarded to the db:import child invocation (which
     # is what actually prompts for confirmation), not consumed here.
@@ -1482,6 +1483,7 @@ elif [ "${command}" = "db:push" ]; then
             suppress = 0
             suppress_rows = 0
         }
+        /^UNLOCK TABLES;/ || /^DELIMITER / { suppress_rows = 0 }
         suppress_rows && /^INSERT INTO / { in_insert = 1 }
         in_insert { if (/;$/) in_insert = 0; next }
         { if (!suppress) print }
