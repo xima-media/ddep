@@ -1407,7 +1407,9 @@ elif [ "${command}" = "db:push" ]; then
     # to an inner script's "$@" the way `docker exec` does (confirmed against
     # a real project), which rules out mirroring db:export's --ignore-table
     # approach directly. exclude_tables suppresses a table/view's structure
-    # and data both; exclude_rows only its data section.
+    # and data both; exclude_rows only its INSERT statements (one line, or
+    # since MariaDB 11 one row per line until the closing ";"), keeping the
+    # table's triggers, which follow its data.
     #
     # --force/--debug are forwarded to the db:import child invocation (which
     # is what actually prompts for confirmation), not consumed here.
@@ -1431,25 +1433,30 @@ elif [ "${command}" = "db:push" ]; then
     # truncated dump to db:import. The markers matched below are pure ASCII,
     # so byte-wise processing is equivalent and safe.
     DOCKER_HOST='' ddev export-db | gzip -dc | LC_ALL=C awk -v exclude_rows="${rows_regex}" -v exclude_tables="${tables_regex}" '
-        BEGIN { suppress = 0 }
+        BEGIN { suppress = 0; suppress_rows = 0; in_insert = 0 }
         /^-- Table structure for table `/ || /^-- Temporary table structure for view `/ {
             name = $0
             sub(/^-- (Table structure for table|Temporary table structure for view) `/, "", name)
             sub(/`.*/, "", name)
             suppress = (exclude_tables != "" && name ~ exclude_tables)
+            suppress_rows = 0
         }
         /^-- Dumping data for table `/ {
             name = $0
             sub(/^-- Dumping data for table `/, "", name)
             sub(/`.*/, "", name)
-            suppress = (exclude_tables != "" && name ~ exclude_tables) || (exclude_rows != "" && name ~ exclude_rows)
+            suppress = (exclude_tables != "" && name ~ exclude_tables)
+            suppress_rows = (exclude_rows != "" && name ~ exclude_rows)
         }
         /^-- Final view structure for view `/ {
             name = $0
             sub(/^-- Final view structure for view `/, "", name)
             sub(/`.*/, "", name)
             suppress = (exclude_tables != "" && name ~ exclude_tables)
+            suppress_rows = 0
         }
+        suppress_rows && /^INSERT INTO / { in_insert = 1 }
+        in_insert { if (/;$/) in_insert = 0; next }
         { if (!suppress) print }
     ' | DDEP_CHILD_INVOCATION=true "$0" "${import_args[@]}"
 fi

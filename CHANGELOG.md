@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `db:import` rewrites the `DEFINER` of views, triggers, events and routines to
   `CURRENT_USER`. Objects dumped under another database user were silently
   missing after the import.
+- `db:push` keeps the triggers of `exclude_rows` tables and only drops their
+  rows, also for dumps with one row per line (MariaDB 11+).
 
 ## [1.3.1] - 2026-11-09
 
