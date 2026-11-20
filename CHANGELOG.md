@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `db:pull` downloads the complete export before importing it. Streaming it
   straight into `ddev import-db` throttled the remote `mariadb-dump` until the
   server dropped the connection on large tables.
+- `db:export` dumps structure and data in one `mariadb-dump` run, so both come
+  from the same snapshot. `exclude_rows` uses `--ignore-table-data`, which
+  needs a `mariadb_version` of 10.6 or newer.
+- Triggers are dumped once, after their table's data. They used to be dumped
+  with the structure as well, so they fired for every imported row (e.g. an
+  audit trigger added rows) and the second copy failed silently.
 
 ## [1.3.1] - 2026-11-09
 

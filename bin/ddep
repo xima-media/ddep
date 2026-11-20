@@ -842,14 +842,14 @@ confirm_destructive() {
 
 # Resolves a set of exclude_rows/exclude_tables regex patterns (JSON array,
 # already loaded into a bash array by the caller) against the remote database's
-# actual table/view names, appending "--ignore-table=db.name" for each match
-# into the nameref array. Separate from db:export's structure/data dump calls so
-# exclude_rows and exclude_tables can each be resolved to their own args and
-# applied to different halves of the dump.
+# actual table/view names, appending "<option>=db.name" for each match into the
+# nameref array: --ignore-table-data for exclude_rows, --ignore-table for
+# exclude_tables.
 resolve_ignore_table_args() {
     local -n _patterns=$1
-    local -n _ignore_args=$2
-    local db_host="$3" db_port="$4" db_user="$5" db_password="$6" db_name="$7" db_ssl="$8"
+    local option="$2"
+    local -n _ignore_args=$3
+    local db_host="$4" db_port="$5" db_user="$6" db_password="$7" db_name="$8" db_ssl="$9"
 
     if [ "${#_patterns[@]}" -eq 0 ]; then
         return 0
@@ -883,7 +883,7 @@ resolve_ignore_table_args() {
 
     local table
     for table in ${tables}; do
-        _ignore_args+=( "--ignore-table=${db_name}.${table}" )
+        _ignore_args+=( "${option}=${db_name}.${table}" )
     done
 }
 
@@ -1241,14 +1241,12 @@ elif [ "${command}" = "db:export" ]; then
     ssl_args=()
     mariadb_ssl_args ssl_args "${db_ssl}"
 
-    # exclude_rows: schema kept, only rows skipped - applied to the data dump only.
-    # exclude_tables: dropped entirely - applied to both the structure and data dump.
-    rows_ignore_args=()
-    resolve_ignore_table_args DB_EXCLUDE_ROWS rows_ignore_args \
+    # exclude_rows tables keep their structure and triggers but skip their
+    # rows, exclude_tables tables/views are left out entirely.
+    dump_args=()
+    resolve_ignore_table_args DB_EXCLUDE_ROWS --ignore-table-data dump_args \
         "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
-
-    tables_ignore_args=()
-    resolve_ignore_table_args DB_EXCLUDE_TABLES tables_ignore_args \
+    resolve_ignore_table_args DB_EXCLUDE_TABLES --ignore-table dump_args \
         "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
 
     # --default-character-set=utf8mb4 on every mariadb/mariadb-dump call (here and in
@@ -1257,10 +1255,10 @@ elif [ "${command}" = "db:export" ]; then
     # dump containing German typographic quotes, which corrupted into stray bytes that
     # broke SQL statement quoting entirely (not just mojibake) once re-imported.
     #
-    # Dump structure and data separately, each gzip-compressed inside the
-    # container before it crosses the SSH-tunnelled Docker connection, then
-    # concatenated into one multi-member gzip stream on stdout (gunzip handles
-    # concatenated gzip members transparently, decompressing back-to-back).
+    # A single mariadb-dump run, so structure, data and triggers come from one
+    # snapshot and triggers follow their table's data (created before the data,
+    # they would fire while it is imported), gzip-compressed inside the
+    # container before it crosses the SSH-tunnelled Docker connection.
     # The container's sh has no pipefail, so a pipe's status is gzip's alone: a
     # mariadb-dump aborting halfway (e.g. "Lost connection to server during
     # query") would otherwise end the stream early with exit 0. Its status is
@@ -1273,12 +1271,8 @@ elif [ "${command}" = "db:export" ]; then
         export MYSQL_PWD="${db_password}"
 
         docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; { mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-data "$@" || echo "$?" > /tmp/dump-failed; } | gzip; [ ! -e /tmp/dump-failed ]' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
-
-        docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; { mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --no-create-info "$@" || echo "$?" > /tmp/dump-failed; } | gzip; [ ! -e /tmp/dump-failed ]' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${rows_ignore_args[@]}" "${tables_ignore_args[@]}" "${db_name}"
+            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; { mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables "$@" || echo "$?" > /tmp/dump-failed; } | gzip; [ ! -e /tmp/dump-failed ]' \
+            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${dump_args[@]}" "${db_name}"
     )
 
 elif [ "${command}" = "db:pull" ]; then

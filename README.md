@@ -169,7 +169,7 @@ deliberately empty).
 | Key                       | Required | Description |
 |---------------------------|:--------:|--------------|
 | `compose_projects_root`   | yes | Remote docker-compose base directory. Set in `.docker/hosts.yaml`'s `all.vars.compose_projects_root` - no built-in default, never read from `.docker/ddep.json` |
-| `mariadb_version`         | no  | MariaDB image tag used for dump/restore. Default: `lts` |
+| `mariadb_version`         | no  | MariaDB image tag used for dumps and imports, 10.6 or newer. Default: `lts` |
 | `settings.<app>.*`        | no  | Overrides any built-in setting for that application — see below |
 
 Everything is deep-merged over the script's built-in defaults, so you only
