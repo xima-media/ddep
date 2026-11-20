@@ -1429,7 +1429,10 @@ elif [ "${command}" = "db:push" ]; then
     # approach directly. exclude_tables suppresses a table/view's structure
     # and data both; exclude_rows only its INSERT statements (one line, or
     # since MariaDB 11 one row per line until the closing ";"), keeping the
-    # table's triggers, which follow its data.
+    # table's triggers, which follow its data. Events, routines and the closing
+    # block (session settings restored, "-- Dump completed" footer that
+    # db:import requires) are never suppressed, even when the last view or
+    # table before them is excluded.
     #
     # --force/--debug are forwarded to the db:import child invocation (which
     # is what actually prompts for confirmation), not consumed here.
@@ -1473,6 +1476,10 @@ elif [ "${command}" = "db:push" ]; then
             sub(/^-- Final view structure for view `/, "", name)
             sub(/`.*/, "", name)
             suppress = (exclude_tables != "" && name ~ exclude_tables)
+            suppress_rows = 0
+        }
+        /^\/\*!40103 SET TIME_ZONE=@OLD_TIME_ZONE \*\/;/ || /^-- Dumping (events|routines) for database / || /^-- Dump completed/ {
+            suppress = 0
             suppress_rows = 0
         }
         suppress_rows && /^INSERT INTO / { in_insert = 1 }

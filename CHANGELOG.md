@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing after the import.
 - `db:push` keeps the triggers of `exclude_rows` tables and only drops their
   rows, also for dumps with one row per line (MariaDB 11+).
+- `db:push` no longer drops the end of the dump (restored session settings,
+  `-- Dump completed` footer) when its last view or table is in
+  `exclude_tables`; `db:import` refuses a dump without that footer.
 
 ## [1.3.1] - 2026-11-09
 

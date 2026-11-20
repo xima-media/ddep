@@ -571,3 +571,27 @@ SQL
     [ "$status" -eq 1 ]
     [[ "$output" == *"--full only applies to db:export"* ]]
 }
+
+@test "db:push filter keeps the closing block and footer after an excluded last view" {
+    local awk_prog
+    awk_prog=$(sed -n "/LC_ALL=C awk -v exclude_rows/,/^    ' | DDEP_CHILD_INVOCATION/p" "$DDEP" | sed '1s/.*awk -v exclude_rows="${rows_regex}" -v exclude_tables="${tables_regex}" '"'"'//; $d')
+    [ -n "$awk_prog" ]
+    run env LC_ALL=C awk -v exclude_rows='^sessions$' -v exclude_tables='^v$' "$awk_prog" <<'SQL'
+-- Table structure for table `sessions`
+CREATE TABLE `sessions` (`id` int);
+-- Dumping data for table `sessions`
+INSERT INTO `sessions` VALUES
+(1);
+-- Final view structure for view `v`
+/*!50001 VIEW `v` AS select 1 AS `x` */;
+/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+-- Dump completed on 2026-01-01
+SQL
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'CREATE TABLE `sessions`'* ]]
+    [[ "$output" != *'(1);'* ]]
+    [[ "$output" != *'VIEW `v`'* ]]
+    [[ "$output" == *'SET SQL_MODE=@OLD_SQL_MODE'* ]]
+    [[ "$(tail -n 1 <<< "$output")" == "-- Dump completed on 2026-01-01" ]]
+}
