@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the structure as well, so they fired for every imported row (e.g. an
   audit trigger added rows) and the second copy failed silently.
 - `db:export` writes binary columns as hex (`--hex-blob`).
+- `db:export` writes the dump to stdout only once it is complete and verified.
+  It dumps to a file inside the remote container, checks the `mariadb-dump` exit
+  code, gzip integrity and the `-- Dump completed` footer, only then sends
+  the file, and checks it again after the transfer. A slow network or reader
+  no longer stalls `mariadb-dump` into the server's `net_write_timeout`.
 
 ## [1.3.1] - 2026-11-09
 

@@ -515,3 +515,33 @@ YAML
     [[ "$output" != *"--no-migration"* ]]
     [[ "$output" != *"Unknown argument"* ]]
 }
+
+# --- dump verification (sourced)
+
+@test "verify_dump_file accepts an intact dump ending with the completion footer" {
+    printf 'CREATE TABLE t (id INT);\n-- Dump completed on 2026-01-01\n' | gzip > "$BATS_TEST_TMPDIR/d.gz"
+    run bash -c 'source "$DDEP"; verify_dump_file "$1"' _ "$BATS_TEST_TMPDIR/d.gz"
+    [ "$status" -eq 0 ]
+}
+
+@test "verify_dump_file rejects a dump without the completion footer" {
+    printf 'CREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\n' | gzip > "$BATS_TEST_TMPDIR/d.gz"
+    run bash -c 'source "$DDEP"; verify_dump_file "$1"' _ "$BATS_TEST_TMPDIR/d.gz"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Dump completed"* ]]
+}
+
+@test "verify_dump_file rejects truncated gzip data" {
+    { printf 'CREATE TABLE t (id INT);\n'; head -c 200000 /dev/urandom | od -An -tx1; printf -- '-- Dump completed on 2026-01-01\n'; } | gzip > "$BATS_TEST_TMPDIR/d.gz"
+    head -c 50000 "$BATS_TEST_TMPDIR/d.gz" > "$BATS_TEST_TMPDIR/cut.gz"
+    run bash -c 'source "$DDEP"; verify_dump_file "$1"' _ "$BATS_TEST_TMPDIR/cut.gz"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"truncated or damaged"* ]]
+}
+
+@test "verify_dump_file rejects damaged gzip data" {
+    { printf 'CREATE TABLE t (id INT);\n'; head -c 200000 /dev/urandom | od -An -tx1; printf -- '-- Dump completed on 2026-01-01\n'; } | gzip > "$BATS_TEST_TMPDIR/d.gz"
+    printf 'XXXX' | dd of="$BATS_TEST_TMPDIR/d.gz" bs=1 seek=30000 conv=notrunc 2>/dev/null
+    run bash -c 'source "$DDEP"; verify_dump_file "$1"' _ "$BATS_TEST_TMPDIR/d.gz"
+    [ "$status" -ne 0 ]
+}

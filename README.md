@@ -253,8 +253,8 @@ doesn't affect the other.
 | `media:push [host] [env]` | Push local media files to the remote application container |
 | `media:pull [host] [env]` | Pull media files from the remote application container |
 | `db:import [host] [env]` | Drop all tables/views in the remote database, import a database dump (read from stdin, plain SQL or gzip) into it, then run the application's DB migration |
-| `db:export [host] [env]` | Export the remote database to stdout, gzip-compressed |
-| `db:pull [host] [env]` | Local-dev convenience wrapper: `db:export` piped into `ddev import-db` for the ddev project in the current working directory, then the application's `db.migration` via `ddev exec` (skip with `--no-migration`). Requires `ddev` on `PATH` |
+| `db:export [host] [env]` | Export the remote database to stdout, gzip-compressed. Nothing is written unless the dump is complete and verified |
+| `db:pull [host] [env]` | Local-dev convenience wrapper: `db:export` into a local temp file, imported with `ddev import-db` into the ddev project in the current working directory once the export succeeded, then the application's `db.migration` via `ddev exec` (skip with `--no-migration`). Requires `ddev` on `PATH` |
 | `db:push [host] [env]` | Local-dev convenience wrapper, the reverse of `db:pull`: dumps the local ddev project's database (same `exclude_rows`/`exclude_tables` filtering as `db:export`) and pipes it into `db:import`. Requires `ddev` on `PATH` |
 | `ssh [host] [env]` | Open an interactive shell inside the remote container |
 | `host [host] [env]` | Open an interactive shell on the remote docker host, in the environment's docker compose project directory (`<compose_projects_root>/<project>_<env>`) |
@@ -284,6 +284,26 @@ Docker connection (`mariadb-dump | gzip` runs inside the remote container, and
 container too), not just at rest — meaningfully faster for large databases
 over a slow or distant link. `db:import` also accepts plain, uncompressed SQL on
 stdin (detected automatically) for backward compatibility.
+
+### Database transfer safety
+
+A dump only moves on once it is complete and verified:
+
+- **`db:export`** runs `mariadb-dump` once (one consistent snapshot) in a
+  container on the remote host and writes it to a file there, so a slow network
+  or reader can't stall the dump. The file is checked there, sent over into a
+  local temp file and checked again before it is written to stdout - `docker
+  run` reports the container's exit code even when the connection lost part of
+  its output. On any failure, stdout stays empty and the exit code is non-zero.
+  The container is removed even if the connection drops, so no dump is left
+  behind on the remote host.
+- **Checked means:** the gzip data is intact (its checksum and length catch a
+  cut or damaged transfer), and the SQL ends with the `-- Dump completed` footer
+  `mariadb-dump`/`mysqldump` only write after a successful run (catches a dump
+  that stopped early).
+- **Disk space:** the local machine (temp directory) and the remote host each
+  need room for one compressed dump during an export. Running out fails the
+  export.
 
 ## Options
 
@@ -416,3 +436,5 @@ ddep --force db:import test staging < dump.sql.gz
 | `host '…' is not configured` | The host argument isn't declared anywhere under `all.children.*.hosts` in `.docker/hosts.yaml` (ddep.json's own `hosts`, if it has one, is ignored - see Setup). Run `ddep config \| jq .hosts` to see every currently resolvable value. |
 | `No container found for project '…' and environment '…'` | Wrong environment, the stack isn't running, or `compose_projects_root`/compose labels don't match. |
 | `no environment given and no terminal available` | Non-interactive run (CI/pipe) with no environment argument; pass it explicitly. |
+| `dump verification failed: …` | The dump is truncated, damaged or has no `-- Dump completed` footer. Nothing was written to stdout; export it again. |
+| `the database export failed (see above)` / `the dump arrived incomplete` | `mariadb-dump` failed on the remote host (its error is shown above), or the connection dropped during the transfer. Nothing was written to stdout; run the export again. |

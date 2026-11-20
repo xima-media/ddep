@@ -83,7 +83,8 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 #                             application's DB migration. A gzip-compressed stream is
 #                             detected and passed through; plain SQL is
 #                             gzip-compressed here before it is sent.
-#   db:export [host] [env]   Export the remote database to stdout as a gzip stream.
+#   db:export [host] [env]   Export the remote database to stdout as a gzip stream,
+#                             written only once complete and verified.
 #                             db.exclude_rows tables keep their schema but skip rows;
 #                             db.exclude_tables tables/views are dropped entirely.
 #   db:pull [host] [env]     Local-dev convenience wrapper: db:export from the
@@ -887,6 +888,55 @@ resolve_ignore_table_args() {
     done
 }
 
+# POSIX sh (the mariadb image's sh is dash: no pipefail, no arrays). Verifies a
+# dump in the export container and again locally once db:export received it.
+# The local check after the export is required:
+# docker run reports the container's exit code, not whether all of its output
+# arrived - a connection (proxy, firewall, SSH) dropping the output stream
+# still ends with exit 0. The gzip data must be intact (its checksum
+# and length catch a cut or damaged file), and the SQL must end with the footer
+# mariadb-dump/mysqldump only write after a successful run (catches a dump that
+# stopped early but was compressed cleanly).
+DUMP_SH_LIB=$(cat <<'SH'
+verify_dump() {
+    if ! gzip -t "$1" 2>/dev/null; then
+        echo "ddep: dump verification failed: gzip data is truncated or damaged" >&2; return 1
+    fi
+    case "$(gzip -dc "$1" | tail -n 1)" in
+        "-- Dump completed"*) ;;
+        *) echo "ddep: dump verification failed: it does not end with mariadb-dump's \"-- Dump completed\" footer (incomplete, or written without comments)" >&2; return 1 ;;
+    esac
+}
+SH
+)
+
+# Runs inside the export container. Positional: host port user ssl-option
+# (may be empty) database, then extra mariadb-dump options. A single
+# mariadb-dump run, so structure, data and triggers come from one snapshot and
+# triggers follow their table's data (created before the data, they would fire
+# while it is imported). Dumped to a file inside the container, so a slow
+# network or reader can't stall mariadb-dump into the server's
+# net_write_timeout, then verified and only then written to stdout. The pipe's
+# status is gzip's alone (no pipefail), so verify_dump is what catches a failed
+# mariadb-dump (it writes the footer only after a successful run) or a failed
+# write (gzip -t).
+EXPORT_SH=$(cat <<'SH'
+h=$1 p=$2 u=$3 ssl=$4 db=$5
+shift 5
+f=/tmp/ddep-dump.sql.gz
+mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" ${ssl:+"$ssl"} \
+    --single-transaction --skip-lock-tables --hex-blob "$@" "$db" | gzip > "$f"
+verify_dump "$f" || exit 1
+cat "$f"
+SH
+)
+
+# Verifies a local dump file with the same verify_dump the export container uses.
+verify_dump_file() {
+    sh -c "${DUMP_SH_LIB}"'
+verify_dump "$1"' sh "$1"
+}
+
 # Allow sourcing (e.g. from tests) to load the functions above without running
 # the CLI below.
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
@@ -899,6 +949,7 @@ host=""
 target_env=""
 exec_command=""
 tmpfile=""
+tmpdir=""
 FORCE=false
 NO_MIGRATION=false
 
@@ -916,6 +967,7 @@ cleanup() {
     local exit_code=$?
     [[ -n "${CONFIG_FILE:-}" ]] && rm -f "${CONFIG_FILE}"
     [[ -n "${tmpfile:-}" ]] && rm -f "${tmpfile}"
+    [[ -n "${tmpdir:-}" ]] && rm -rf "${tmpdir}"
     exit "${exit_code}"
 }
 trap cleanup EXIT
@@ -1250,30 +1302,34 @@ elif [ "${command}" = "db:export" ]; then
         "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db_name}" "${db_ssl}"
 
     # --default-character-set=utf8mb4 on every mariadb/mariadb-dump call (here and in
-    # db:import below): without it, the client library's own default (latin1) silently
+    # db:import above): without it, the client library's own default (latin1) silently
     # mangles multi-byte UTF-8 content on the way through - confirmed against a real
     # dump containing German typographic quotes, which corrupted into stray bytes that
     # broke SQL statement quoting entirely (not just mojibake) once re-imported.
     #
-    # A single mariadb-dump run, so structure, data and triggers come from one
-    # snapshot and triggers follow their table's data (created before the data,
-    # they would fire while it is imported), gzip-compressed inside the
-    # container before it crosses the SSH-tunnelled Docker connection.
-    # The container's sh has no pipefail, so a pipe's status is gzip's alone: a
-    # mariadb-dump aborting halfway (e.g. "Lost connection to server during
-    # query") would otherwise end the stream early with exit 0. Its status is
-    # therefore passed out of the pipe via a marker file, failing the docker run
-    # and - under set -e - db:export as a whole.
+    # The dump is written and verified inside the export container (EXPORT_SH),
+    # which only then sends it. It lands in a local file first and reaches
+    # stdout only once it is verified again here, so stdout receives nothing
+    # unless the dump is complete. --rm: the daemon removes the container, and the
+    # dump inside it, even if this side loses the connection.
     # MYSQL_PWD is exported inside a subshell with tracing disabled so --debug
     # never echoes it, and forwarded via -e (not -p) so it never appears in argv.
-    (
+    tmpdir=$(mktemp -d)
+    if ! (
         { set +x; } 2>/dev/null
         export MYSQL_PWD="${db_password}"
-
         docker run --rm --add-host=host.docker.internal:host-gateway -e MYSQL_PWD "mariadb:${MARIADB_VERSION}" \
-            sh -c 'h="$1"; p="$2"; u="$3"; shift 3; { mariadb-dump --default-character-set=utf8mb4 --host="$h" --port="$p" --user="$u" --single-transaction --skip-lock-tables --hex-blob "$@" || echo "$?" > /tmp/dump-failed; } | gzip; [ ! -e /tmp/dump-failed ]' \
-            sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[@]}" "${dump_args[@]}" "${db_name}"
-    )
+            sh -c "${DUMP_SH_LIB}
+${EXPORT_SH}" sh "${db_host}" "${db_port}" "${db_user}" "${ssl_args[0]:-}" "${db_name}" "${dump_args[@]}"
+    ) > "${tmpdir}/dump.sql.gz"; then
+        echo "${COLOR_RED}Error: the database export failed (see above).${COLOR_RESET}" >&2
+        exit 1
+    fi
+    if ! verify_dump_file "${tmpdir}/dump.sql.gz"; then
+        echo "${COLOR_RED}Error: the dump arrived incomplete (connection dropped?).${COLOR_RESET}" >&2
+        exit 1
+    fi
+    cat "${tmpdir}/dump.sql.gz"
 
 elif [ "${command}" = "db:pull" ]; then
     # Local-dev convenience wrapper: db:export from the remote (host/
@@ -1289,15 +1345,13 @@ elif [ "${command}" = "db:pull" ]; then
     # ddev's own internal docker calls would otherwise inherit and query
     # instead of the local daemon its db container runs on.
     #
-    # The export goes to a temp file first and is only imported once it is
-    # complete (cleanup runs via the global EXIT trap). Streamed straight into
-    # ddev import-db, the slower import throttles the remote mariadb-dump until
-    # the server drops the connection (net_write_timeout, "Error 2013: Lost
-    # connection to server during query"), and a failed export would already
-    # have been imported partially, leaving a truncated local database.
-    tmpfile=$(mktemp)
-    DDEP_CHILD_INVOCATION=true "$0" db:export "${host}" "${target_env}" > "${tmpfile}"
-    gzip -dc "${tmpfile}" | DOCKER_HOST='' ddev import-db
+    # The export goes to a temp file first and is only imported once db:export
+    # succeeded, which it only does for a complete, verified dump (cleanup runs
+    # via the global EXIT trap), so a failed export never leaves a partially
+    # imported local database.
+    tmpdir=$(mktemp -d)
+    DDEP_CHILD_INVOCATION=true "$0" db:export "${host}" "${target_env}" > "${tmpdir}/dump.sql.gz"
+    gzip -dc "${tmpdir}/dump.sql.gz" | DOCKER_HOST='' ddev import-db
 
     # Same db.migration as db:import runs remotely, so exclude_tables views,
     # pending migrations of the local branch etc. exist locally too. One
