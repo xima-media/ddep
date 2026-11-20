@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`docker cp`) before the import starts, so a connection dropping during the
   transfer no longer leaves a half-imported database. Every dump must end with
   the `-- Dump completed` footer.
+- `db:import` no longer ignores failing statements (`mariadb --force`). A row
+  larger than `max_allowed_packet`, for example, used to empty the whole table
+  with exit 0. Now the import stops at the first failing statement and exits
+  non-zero.
+- `db:import` rewrites the `DEFINER` of views, triggers, events and routines to
+  `CURRENT_USER`. Objects dumped under another database user were silently
+  missing after the import.
 
 ## [1.3.1] - 2026-11-09
 

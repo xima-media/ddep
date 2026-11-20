@@ -52,8 +52,8 @@ YQ_IMAGE="mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1ca
 # db.exclude_rows: schema kept, only rows are skipped - for live per-environment
 #   state (e.g. sessions) that the app's own schema still manages.
 # db.exclude_tables: dropped entirely, structure and data both - for tables/views
-#   that shouldn't exist in the dump at all (e.g. one exposing a DEFINER tied to
-#   its origin server).
+#   that shouldn't exist in the dump at all and that the target recreates
+#   itself, if needed (see README "Overrides").
 # A ddep.json still setting "app"/"hosts" (the pre-hosts.yaml schema) has both
 # ignored, with a warning - see load_config.
 
@@ -934,13 +934,12 @@ SH
 # Runs inside the import container. Positional: host port user ssl-option
 # (may be empty) database drop-query. Exits non-zero when dropping or importing
 # failed, leaving the database incomplete.
-# --force: a dump from anywhere other than this same app's own db:export (a
-# plain mariadb-dump, ddev export-db, ...) can contain statements this
-# connection's user can't run as-is - e.g. a view's CREATE carrying a DEFINER
-# from wherever it was dumped, which fails with "Access denied; you need ...
-# SET USER ... privilege" for any other user. --force logs the failing
-# statement and moves on, so the migration afterwards - which re-creates such a
-# view correctly - still runs.
+# The DEFINER rewrite lets views/triggers/events/routines dumped under another
+# user import under this connection's user (SET USER privilege otherwise). It
+# only matches the line starts mariadb-dump/mysqldump write for those objects;
+# row data lines start with "INSERT INTO" or "(" (newlines inside values are
+# escaped), so row data is never rewritten. Without --force, the first failing
+# statement aborts the import instead of being skipped.
 IMPORT_SH=$(cat <<'SH'
 h=$1 p=$2 u=$3 ssl=$4 db=$5 q=$6
 m() {
@@ -949,7 +948,8 @@ m() {
 drops=$(m --skip-column-names --batch --raw --execute="$q") || exit 1
 printf '%s\n' "SET FOREIGN_KEY_CHECKS=0;" "$drops" | m || exit 1
 { gzip -dc /tmp/ddep-import.sql.gz || echo "$?" > /tmp/ddep-gunzip-failed; } \
-    | m --force || exit 1
+    | sed -E 's#^(/\*!50013 |/\*!50003 CREATE\*/ /\*!50017 |/\*!50106 CREATE\*/ /\*!50117 |CREATE )DEFINER=`[^`]*`@`[^`]*`#\1DEFINER=CURRENT_USER#' \
+    | m --max-allowed-packet=1G || exit 1
 [ -e /tmp/ddep-gunzip-failed ] && exit 1
 exit 0
 SH

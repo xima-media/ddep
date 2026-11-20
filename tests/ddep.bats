@@ -516,7 +516,7 @@ YAML
     [[ "$output" != *"Unknown argument"* ]]
 }
 
-# --- dump verification (sourced)
+# --- dump verification and DEFINER rewrite (sourced)
 
 @test "verify_dump_file accepts an intact dump ending with the completion footer" {
     printf 'CREATE TABLE t (id INT);\n-- Dump completed on 2026-01-01\n' | gzip > "$BATS_TEST_TMPDIR/d.gz"
@@ -544,4 +544,24 @@ YAML
     printf 'XXXX' | dd of="$BATS_TEST_TMPDIR/d.gz" bs=1 seek=30000 conv=notrunc 2>/dev/null
     run bash -c 'source "$DDEP"; verify_dump_file "$1"' _ "$BATS_TEST_TMPDIR/d.gz"
     [ "$status" -ne 0 ]
+}
+
+@test "import DEFINER rewrite covers views, triggers, events and routines but never row data" {
+    local sed_expr
+    sed_expr=$(bash -c 'source "$DDEP"; printf "%s\n" "$IMPORT_SH"' | sed -n "s/^ *| sed -E '\\(.*\\)' \\\\\$/\\1/p")
+    [ -n "$sed_expr" ]
+    run sed -E "$sed_expr" <<'SQL'
+/*!50013 DEFINER=`other`@`%` SQL SECURITY DEFINER */
+/*!50003 CREATE*/ /*!50017 DEFINER=`other`@`%`*/ /*!50003 TRIGGER t_ai AFTER INSERT ON t FOR EACH ROW SET @x = 1 */;;
+/*!50106 CREATE*/ /*!50117 DEFINER=`other`@`%`*/ /*!50106 EVENT `ev` ON SCHEDULE EVERY 1 DAY DO SELECT 1 */ ;;
+CREATE DEFINER=`other`@`%` PROCEDURE `p`()
+INSERT INTO `t` VALUES (1,'DEFINER=`x`@`y`'),(2,'CREATE DEFINER=`x`@`y`');
+(3,'DEFINER=`x`@`y`'),
+(4,'/*!50013 DEFINER=`x`@`y`');
+SQL
+    [ "$status" -eq 0 ]
+    [ "$(grep -c 'DEFINER=CURRENT_USER' <<< "$output")" -eq 4 ]
+    [[ "$output" == *"(1,'DEFINER=\`x\`@\`y\`'),(2,'CREATE DEFINER=\`x\`@\`y\`');"* ]]
+    [[ "$output" == *"(3,'DEFINER=\`x\`@\`y\`'),"* ]]
+    [[ "$output" == *"(4,'/*!50013 DEFINER=\`x\`@\`y\`');"* ]]
 }

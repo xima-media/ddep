@@ -294,10 +294,11 @@ is only changed by a dump that arrived complete:
 - **`db:import`** checks the dump locally before anything else, then copies it
   completely into a container on the remote host (`docker cp`). Only then does
   that container drop the target's tables/views and import, so a connection
-  dropping during the copy fails before anything is changed. If the import
-  fails, the exit code is non-zero and the target is incomplete and needs a new
-  import. An import interrupted after the copy keeps running on the remote host
-  instead of stopping halfway. One import per environment runs at a time.
+  dropping during the copy fails before anything is changed. The first failing
+  statement aborts the import with a non-zero exit code; the target is then
+  incomplete and needs a new import. An import interrupted after the copy keeps
+  running on the remote host instead of stopping halfway. One import per
+  environment runs at a time.
 - **Checked means:** the gzip data is intact (its checksum and length catch a
   cut or damaged transfer), and the SQL ends with the `-- Dump completed` footer
   `mariadb-dump`/`mysqldump` only write after a successful run (catches a dump
@@ -305,6 +306,9 @@ is only changed by a dump that arrived complete:
   from `ddev export-db` or an older ddep; dumps written with `--skip-comments`
   (or empty input) are refused. Plain, uncompressed SQL on stdin is
   detected and compressed automatically.
+- **`DEFINER`s** of views, triggers, events and routines are rewritten to
+  `CURRENT_USER` on import, so objects dumped under another database user import
+  instead of failing. Row data is never rewritten.
 - **Disk space:** the local machine (temp directory) and the remote host each
   need room for one compressed dump during an export or import. Running out
   fails the command before anything is changed.
@@ -442,5 +446,5 @@ ddep --force db:import test staging < dump.sql.gz
 | `no environment given and no terminal available` | Non-interactive run (CI/pipe) with no environment argument; pass it explicitly. |
 | `dump verification failed: …` | The dump is truncated, damaged or has no `-- Dump completed` footer. Nothing was changed; export it again. |
 | `the database export failed (see above)` / `the dump arrived incomplete` | `mariadb-dump` failed on the remote host (its error is shown above), or the connection dropped during the transfer. Nothing was written to stdout; run the export again. |
-| `the import failed or the connection was lost (see above) - the database may be incomplete` | The import on the remote host failed (shown above), or the connection dropped mid-import. Fix the cause and import again. |
+| `the import failed or the connection was lost (see above) - the database may be incomplete` | A statement in the dump failed (shown above), e.g. a row larger than the server's `max_allowed_packet`, or the connection dropped mid-import. Fix the cause and import again. |
 | `another import into '…' is still running` | Wait for it; an interrupted import keeps running on the remote host and finishes on its own. |
